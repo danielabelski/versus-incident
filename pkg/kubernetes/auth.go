@@ -55,7 +55,10 @@ func (source *expiringBearerSource) Authorization(ctx context.Context) (string, 
 	}
 	token, expires, err := source.refresh(ctx)
 	if err != nil {
-		return "", err
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return "", err
+		}
+		return "", ErrCredentialUnavailable
 	}
 	header, err := bearerHeader(token)
 	if err != nil || !expires.After(now) {
@@ -96,7 +99,7 @@ func tokenFileCredential(path string) CredentialSource {
 	return &credentialSource{authorization: func(context.Context) (string, error) {
 		data, err := readBoundedFile(path, maxTokenBytes)
 		if err != nil {
-			return "", errors.New("kubernetes: credential unavailable")
+			return "", ErrCredentialUnavailable
 		}
 		return bearerHeader(string(data))
 	}}
@@ -169,7 +172,7 @@ func (cache *certificateFileCache) load() (*tls.Certificate, error) {
 func bearerHeader(token string) (string, error) {
 	token = strings.TrimSpace(token)
 	if token == "" || len(token) > int(maxTokenBytes) || strings.ContainsAny(token, "\r\n") {
-		return "", errors.New("kubernetes: credential unavailable")
+		return "", ErrCredentialUnavailable
 	}
 	return "Bearer " + token, nil
 }

@@ -97,36 +97,33 @@ test.describe("Agent tool catalog", () => {
       await enableVersusDefaults(page, chatSettings);
       await enableVersusDefaults(page, analyzeSettings);
       await page.reload();
-      await expect(page.getByRole("heading", { name: "Agent tools" })).toBeVisible();
-      const groups = page.locator("main section > div:first-child h2");
-      await expect(groups).toHaveText(["Connectors", "Data Source Tools", "Common"]);
-      await expect(page.locator("main article")).toHaveCount(7);
+      await expect(page.getByRole("heading", { name: "Tool catalog" })).toBeVisible();
+      await expect(page.getByRole("heading", { level: 2 })).toHaveText(["Connectors", "Data Source Tools", "Common"]);
+      await expect(page.locator("main article")).toHaveCount(16);
+      await expect(page.getByRole("textbox", { name: "Search tools" })).toHaveCount(0);
+      await expect(page.getByRole("tablist")).toHaveCount(0);
       await expect(page.getByText("get_incident", { exact: true })).toHaveCount(0);
       await expect(page.getByText("get_cluster_overview", { exact: true })).toHaveCount(0);
       await expect(page.getByRole("heading", { name: "Kubernetes" })).toBeVisible();
-      await expect(page.getByText("9 tools", { exact: true })).toBeVisible();
-      await expect(page.getByText("needs permission", { exact: true })).toBeVisible();
-      await expect(page.getByText("Kubernetes is unavailable: infrastructure:view permission is required", { exact: true })).toBeVisible();
+      await expect(page.getByText("9 tools", { exact: true })).toHaveCount(0);
+      await expect(page.getByText("No access", { exact: true })).toBeVisible();
+      await expect(page.getByText("infrastructure:view permission is required", { exact: false })).toHaveCount(0);
+      await expect(page.getByText("Inspect Kubernetes.", { exact: true })).toHaveCount(0);
+      await expect(page.getByRole("checkbox")).toHaveCount(0);
 
-      const unavailableToggle = page.getByLabel("Enable Kubernetes for chat");
-      await expect(unavailableToggle).toBeVisible();
-      await expect(unavailableToggle).not.toBeChecked();
-      await expect(unavailableToggle).toBeDisabled();
-
-      const cards = page.locator("main article");
-      await expect(page.getByRole("link", { name: "Documentation" })).toHaveCount(7);
-      const docs = page.getByRole("link", { name: "Documentation" });
-      for (let index = 0; index < await docs.count(); index++) {
-        await expect(docs.nth(index)).toHaveAttribute("target", "_blank");
-        await expect(docs.nth(index)).toHaveAttribute("rel", "noopener noreferrer");
-      }
-      const runbookCard = cards.filter({ hasText: "Find runbook" });
-      await expect(runbookCard.getByRole("link", { name: "Open tool" })).toHaveAttribute("href", "/agent/runbooks");
-      const licensedCard = cards.filter({ hasText: "Metrics" });
-      await expect(licensedCard.getByRole("link", { name: "Open tool" })).toHaveCount(0);
-      const permissionCard = cards.filter({ hasText: "Kubernetes" });
-      await expect(permissionCard.getByRole("link", { name: "Open tool" })).toHaveCount(0);
-      await expect(permissionCard.getByRole("link", { name: "Documentation" })).toBeVisible();
+      const rows = page.locator("main article");
+      const runbookRow = rows.filter({ hasText: "Find runbook" });
+      await expect(runbookRow.getByRole("link", { name: "Open Find runbook" })).toHaveAttribute("href", "/agent/runbooks");
+      const licensedRow = rows.filter({ hasText: "Prometheus" });
+      await expect(licensedRow.getByRole("link", { name: /^Open / })).toHaveCount(0);
+      const permissionRow = rows.filter({ hasText: "Kubernetes" });
+      await expect(permissionRow.getByRole("link", { name: /^Open / })).toHaveCount(0);
+      await permissionRow.getByRole("button", { name: "Kubernetes settings" }).click();
+      const details = page.getByRole("dialog", { name: "Kubernetes" });
+      await expect(details).toContainText("No access");
+      await expect(details).toContainText("infrastructure:view permission is required");
+      await expect(details.getByRole("link", { name: "Documentation" })).toBeVisible();
+      await details.getByRole("button", { name: "Close dialog" }).click();
 
       const nav = primaryNav(page);
       await expect(nav.getByRole("link", { name: "Runbooks", exact: true })).toHaveCount(0);
@@ -150,7 +147,7 @@ test.describe("Agent tool catalog", () => {
     }
   });
 
-  test("surfaces a disabled Versus recovery card", async ({ page }, testInfo) => {
+  test("surfaces disabled Versus recovery details in settings", async ({ page }, testInfo) => {
     await openApp(page, "/agent/tools");
     const chatSettings = await captureVersusSettings(page, "chat");
     let primaryError: unknown;
@@ -167,8 +164,11 @@ test.describe("Agent tool catalog", () => {
       expect(disable, `${disable.status} ${disable.body}`).toMatchObject({ ok: true });
       await page.reload();
       await expect(page.getByText("get_incident", { exact: true })).toHaveCount(0);
-      await expect(page.getByRole("heading", { name: "Versus core" })).toBeVisible();
-      await expect(page.getByLabel("Enable Versus core for chat")).toBeEnabled();
+      await expect(page.getByRole("heading", { name: "Describe dependencies" })).toBeVisible();
+      await page.getByRole("button", { name: "Describe dependencies settings" }).click();
+      const details = page.getByRole("dialog", { name: "Describe dependencies" });
+      await expect(details.getByRole("checkbox")).toBeDisabled();
+      await expect(details).toContainText(/Setup required|not configured|unavailable/i);
     } catch (error) {
       primaryError = error;
       throw error;
@@ -188,9 +188,9 @@ test.describe("Agent tool catalog", () => {
       await enableVersusDefaults(page, chatSettings);
       await enableVersusDefaults(page, analyzeSettings);
       await page.reload();
-      await expect(page.getByRole("heading", { name: "Agent tools" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Tool catalog" })).toBeVisible();
       const cards = page.locator("main article");
-      await expect(cards).toHaveCount(7);
+      await expect(cards).toHaveCount(16);
       const first = await cards.first().boundingBox();
       const second = await cards.nth(1).boundingBox();
       expect(first).not.toBeNull();

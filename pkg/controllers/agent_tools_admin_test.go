@@ -174,7 +174,7 @@ func TestAgentToolsetsListReturnsExactlySevenChildFreeCardsInServerOrder(t *test
 			t.Errorf("row %s exposed hidden child names", id)
 		}
 	}
-	if rows[0]["child_count"] != float64(9) || rows[0]["icon_key"] != "kubernetes" || rows[0]["ui_path"] != "/agent/kubernetes" {
+	if rows[0]["child_count"] != float64(8) || rows[0]["icon_key"] != "kubernetes" || rows[0]["ui_path"] != "/agent/kubernetes" {
 		t.Fatalf("Kubernetes card = %#v", rows[0])
 	}
 }

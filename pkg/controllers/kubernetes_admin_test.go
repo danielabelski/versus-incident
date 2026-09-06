@@ -1,8 +1,11 @@
 package controllers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -75,6 +78,61 @@ func TestKubernetesAdminRegistersOnlyGetRoutes(t *testing.T) {
 	response, err := app.Test(httptest.NewRequest("POST", "/api/admin/kubernetes/resources", nil), -1)
 	if err != nil || response.StatusCode == fiber.StatusOK {
 		t.Fatalf("POST status=%v err=%v", response.StatusCode, err)
+	}
+	for _, routes := range app.Stack() {
+		for _, route := range routes {
+			if route.Method == http.MethodGet && route.Path == "/api/admin/kubernetes/topology" {
+				t.Fatal("topology route is registered")
+			}
+		}
+	}
+}
+
+func TestWriteKubernetesReturnsSafeActionableDiagnostics(t *testing.T) {
+	tests := []struct {
+		name   string
+		err    error
+		status int
+		code   string
+	}{
+		{name: "credentials", err: kubernetes.ErrCredentialUnavailable, status: fiber.StatusBadGateway, code: "credential_unavailable"},
+		{name: "authentication", err: kubernetes.ErrUnauthorized, status: fiber.StatusBadGateway, code: "cluster_authentication_failed"},
+		{name: "permission", err: kubernetes.ErrForbidden, status: fiber.StatusForbidden, code: "cluster_permission_denied"},
+		{name: "configuration", err: kubernetes.ErrInvalidEndpoint, status: fiber.StatusBadRequest, code: "connector_configuration_invalid"},
+		{name: "timeout", err: context.DeadlineExceeded, status: fiber.StatusGatewayTimeout, code: "request_timeout"},
+		{name: "fallback", err: errors.New("provider secret response"), status: fiber.StatusBadGateway, code: "read_failed"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			previous := log.Writer()
+			log.SetOutput(&logs)
+			t.Cleanup(func() { log.SetOutput(previous) })
+			app := fiber.New()
+			app.Get("/", func(ctx *fiber.Ctx) error { return writeKubernetes(ctx, nil, test.err) })
+			response, err := app.Test(httptest.NewRequest(http.MethodGet, "/", nil), -1)
+			if err != nil || response.StatusCode != test.status {
+				t.Fatalf("status=%d err=%v", response.StatusCode, err)
+			}
+			var body struct {
+				Error     string `json:"error"`
+				Code      string `json:"code"`
+				Action    string `json:"action"`
+				Retryable bool   `json:"retryable"`
+			}
+			if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if body.Code != test.code || body.Error == "" || body.Action == "" {
+				t.Fatalf("body = %+v", body)
+			}
+			if bytes.Contains(logs.Bytes(), []byte("provider secret response")) || body.Error == "provider secret response" || body.Action == "provider secret response" {
+				t.Fatalf("raw cause leaked: body=%+v logs=%q", body, logs.String())
+			}
+			if !bytes.Contains(logs.Bytes(), []byte("code="+test.code)) {
+				t.Fatalf("safe code absent from log: %q", logs.String())
+			}
+		})
 	}
 }
 

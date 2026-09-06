@@ -6,10 +6,9 @@ import {
   type KeyboardEvent,
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   ArrowDown,
-  Bot,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -17,9 +16,6 @@ import {
   Clock3,
   History,
   LoaderCircle,
-  Paperclip,
-  PanelLeftClose,
-  PanelLeftOpen,
   Plus,
   Send,
   Trash2,
@@ -29,12 +25,12 @@ import {
 } from "lucide-react";
 import clsx from "clsx";
 import { TopBar } from "@/components/TopBar";
+import { Modal } from "@/components/Modal";
 import { RetryableError } from "@/components/RetryableError";
 import { MarkdownText } from "@/components/chat/MarkdownText";
 import {
   api,
   ApiError,
-  type ChatAttachment,
   type ChatCitation,
   type ChatEvent,
   type ChatSession,
@@ -48,8 +44,9 @@ import {
   type ChatStreamBlock,
 } from "@/lib/chatStream";
 import { fmtRel, truncate } from "@/lib/format";
-import { capChatMessage, MAX_CHAT_MESSAGE_BYTES } from "@/lib/markdownPolicy";
+import { capChatMessage } from "@/lib/markdownPolicy";
 import { useStickyBottom } from "@/lib/useStickyBottom";
+import { getStoredTheme, type Theme } from "@/lib/theme";
 
 const suggestions = [
   "What changed before the latest incident?",
@@ -71,8 +68,17 @@ interface LiveRun {
   stopping: boolean;
 }
 
-const maxAttachmentSpanMs = 32 * 24 * 60 * 60 * 1000;
-const messageEncoder = new TextEncoder();
+
+function VersusChatLogo() {
+  const [theme, setTheme] = useState<Theme>(getStoredTheme);
+  useEffect(() => {
+    const sync = () => setTheme(document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark");
+    const observer = new MutationObserver(sync);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => observer.disconnect();
+  }, []);
+  return <img src={theme === "dark" ? "/versus-logo-light.svg" : "/versus-logo-dark.svg"} alt="Versus" className="mx-auto h-10 w-10 object-contain" />;
+}
 
 function trapDialogFocus(event: KeyboardEvent<HTMLElement>, onClose: () => void) {
   if (event.key === "Escape") {
@@ -219,6 +225,10 @@ function CitationList({ citations, onOpen }: { citations?: ChatCitation[]; onOpe
 
 function TurnView({ turn, onEvidence }: { turn: ChatTurn; onEvidence: (value: EvidenceSelection) => void }) {
   if (turn.role === "compaction") {
+    if (turn.content.trimStart().startsWith('{"kind":"session_discovery"')) return null;
+    if (turn.content === "Chat run ended without an assistant answer." || turn.content.startsWith("The model could not produce a response.")) {
+      return <div role="alert" className="my-4 rounded-control border border-sev-warning/40 bg-sev-warning/10 p-3 text-xs leading-5 text-ink-200"><span className="font-medium text-sev-warning">The model could not produce a response.</span> Verify the configured AI provider credentials, model access, and completion-token budget, then retry.</div>;
+    }
     return <div className="my-4 text-center text-2xs italic text-ink-400">{turn.content}</div>;
   }
   if (turn.role === "user") {
@@ -272,7 +282,7 @@ function LiveBlocks({ blocks, terminal }: { blocks: ChatStreamBlock[]; terminal:
   );
 }
 
-function HistoryRail({ sessions, selected, selectedFull, loading, deleteErrors, onSelect, onDelete, onDismissDeleteError, onClose }: {
+function HistoryList({ sessions, selected, selectedFull, loading, deleteErrors, onSelect, onDelete, onDismissDeleteError }: {
   sessions: ChatSessionSummary[];
   selected: string | null;
   selectedFull?: ChatSession;
@@ -281,15 +291,10 @@ function HistoryRail({ sessions, selected, selectedFull, loading, deleteErrors, 
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
   onDismissDeleteError: (id: string) => void;
-  onClose: () => void;
 }) {
   return (
-    <div className="flex h-full w-[300px] flex-col border-r border-ink-500/50 bg-surface-sunken">
-      <div className="flex h-12 items-center justify-between border-b border-ink-500/40 px-3">
-        <span className="text-xs font-semibold text-ink-100">Thread history</span>
-        <button type="button" onClick={onClose} aria-label="Close history" title="Close history" className="rounded-control p-2 text-ink-300 hover:bg-ink-700"><PanelLeftClose size={16} /></button>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-2">
+    <div className="min-h-0">
+      <div className="max-h-[min(60vh,32rem)] overflow-y-auto pr-1">
         {loading ? (
           <div className="space-y-2" aria-label="Loading history">{[0, 1, 2, 3].map((value) => <div key={value} className="sk h-11 rounded-control" />)}</div>
         ) : sessions.length === 0 ? (
@@ -319,104 +324,35 @@ function HistoryRail({ sessions, selected, selectedFull, loading, deleteErrors, 
   );
 }
 
-function Composer({ value, onChange, onSubmit, running, stopping, onStop, attachment, onAttachmentChange, resetGeneration }: {
+function Composer({ value, onChange, onSubmit, running, stopping, onStop }: {
   value: string;
   onChange: (value: string) => void;
   onSubmit: () => void;
   running: boolean;
   stopping: boolean;
   onStop: () => void;
-  attachment: ChatAttachment;
-  onAttachmentChange: (value: ChatAttachment) => void;
-  resetGeneration: number;
 }) {
-  const [contextOpen, setContextOpen] = useState(false);
-  const [start, setStart] = useState(attachment.time_range?.start ?? "");
-  const [end, setEnd] = useState(attachment.time_range?.end ?? "");
-  const [timeError, setTimeError] = useState("");
-  useEffect(() => {
-    setStart("");
-    setEnd("");
-    setTimeError("");
-  }, [resetGeneration]);
-  const messageBytes = messageEncoder.encode(value).byteLength;
-  const submit = (event: FormEvent) => { event.preventDefault(); if (!running && !timeError && value.trim()) onSubmit(); };
+  const submit = (event: FormEvent) => { event.preventDefault(); if (!running && value.trim()) onSubmit(); };
   const keyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); if (!running && !timeError && value.trim()) onSubmit(); }
-  };
-  const setTime = (nextStart: string, nextEnd: string) => {
-    setStart(nextStart); setEnd(nextEnd);
-    if (!nextStart && !nextEnd) {
-      setTimeError("");
-      onAttachmentChange({ ...attachment, time_range: undefined });
-      return;
-    }
-    if (!nextStart || !nextEnd) {
-      setTimeError("Choose both a start and an end time.");
-      onAttachmentChange({ ...attachment, time_range: undefined });
-      return;
-    }
-    const startDate = new Date(nextStart);
-    const endDate = new Date(nextEnd);
-    if (!Number.isFinite(startDate.getTime()) || !Number.isFinite(endDate.getTime())) {
-      setTimeError("Enter valid start and end times.");
-      onAttachmentChange({ ...attachment, time_range: undefined });
-      return;
-    }
-    if (startDate >= endDate) {
-      setTimeError("End time must be after start time.");
-      onAttachmentChange({ ...attachment, time_range: undefined });
-      return;
-    }
-    if (endDate.getTime() - startDate.getTime() > maxAttachmentSpanMs) {
-      setTimeError("Choose a time window of 32 days or less.");
-      onAttachmentChange({ ...attachment, time_range: undefined });
-      return;
-    }
-    setTimeError("");
-    onAttachmentChange({ ...attachment, time_range: { start: startDate.toISOString(), end: endDate.toISOString() } });
-  };
-  const chips = [
-    attachment.service ? { key: "service", label: `Service: ${attachment.service}` } : null,
-    attachment.incident?.id ? { key: "incident", label: `Incident: ${attachment.incident.id}` } : null,
-    attachment.time_range ? { key: "time", label: "Time window" } : null,
-  ].filter(Boolean) as { key: string; label: string }[];
-  const remove = (key: string) => {
-    if (key === "service") onAttachmentChange({ ...attachment, service: undefined });
-    if (key === "incident") onAttachmentChange({ ...attachment, incident: undefined });
-    if (key === "time") { setStart(""); setEnd(""); onAttachmentChange({ ...attachment, time_range: undefined }); }
+    if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); if (!running && value.trim()) onSubmit(); }
   };
   return (
-    <form onSubmit={submit} className="rounded-xl border border-ink-500/70 bg-surface shadow-card">
-      {contextOpen && (
-        <div className="grid gap-2 border-b border-ink-500/40 p-3 sm:grid-cols-2">
-          <label className="text-2xs text-ink-300">Service<input aria-label="Service context" value={attachment.service ?? ""} onChange={(event) => onAttachmentChange({ ...attachment, service: event.target.value || undefined })} className="input mt-1 w-full" placeholder="checkout-api" /></label>
-          <label className="text-2xs text-ink-300">Incident ID<input aria-label="Incident ID context" value={attachment.incident?.id ?? ""} onChange={(event) => onAttachmentChange({ ...attachment, incident: event.target.value ? { id: event.target.value } : undefined })} className="input mt-1 w-full" placeholder="inc_..." /></label>
-          <label className="text-2xs text-ink-300">Start<input aria-label="Context start" aria-invalid={Boolean(timeError)} aria-describedby={timeError ? "chat-time-error" : undefined} type="datetime-local" value={start} onChange={(event) => setTime(event.target.value, end)} className="input mt-1 w-full" /></label>
-          <label className="text-2xs text-ink-300">End<input aria-label="Context end" aria-invalid={Boolean(timeError)} aria-describedby={timeError ? "chat-time-error" : undefined} type="datetime-local" value={end} onChange={(event) => setTime(start, event.target.value)} className="input mt-1 w-full" /></label>
-          {timeError && <p id="chat-time-error" role="alert" className="text-2xs text-sev-critical sm:col-span-2">{timeError}</p>}
-        </div>
-      )}
-      {chips.length > 0 && <div className="flex flex-wrap gap-1.5 px-3 pt-2">{chips.map((chip) => <span key={chip.key} className="pill max-w-full"><span className="truncate">{chip.label}</span><button type="button" onClick={() => remove(chip.key)} aria-label={`Remove ${chip.label}`}><X size={11} /></button></span>)}</div>}
+    <form onSubmit={submit} className="flex items-end gap-2 rounded-[24px] border border-ink-500/70 bg-surface px-3 py-2 shadow-card">
       <textarea
         value={value}
         onChange={(event) => onChange(capChatMessage(event.target.value))}
         onKeyDown={keyDown}
-        rows={2}
+        rows={1}
         placeholder="Ask about your system"
         aria-label="Message"
-        aria-describedby="chat-message-budget"
-        className="max-h-40 min-h-[72px] w-full resize-none bg-transparent px-4 py-3 text-base leading-6 text-ink-50 outline-none placeholder:text-ink-400 lg:text-sm"
+        style={{ outline: "none" }}
+        className="max-h-40 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-base leading-6 text-ink-50 outline-none placeholder:text-ink-400 focus:outline-none focus-visible:outline-none lg:text-sm"
       />
-      <div className="flex min-h-12 items-center justify-between gap-2 px-2 pb-2">
-        <button type="button" onClick={() => setContextOpen((open) => !open)} aria-expanded={contextOpen} aria-label="Attach context" title="Attach service, incident, or time context" className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-control text-ink-300 hover:bg-ink-700"><Paperclip size={17} /></button>
-        <span id="chat-message-budget" className="ml-auto text-2xs tabular-nums text-ink-400">{MAX_CHAT_MESSAGE_BYTES - messageBytes} letters left</span>
-        {running ? (
-          <button type="button" onClick={onStop} disabled={stopping} className="inline-flex min-h-11 items-center gap-2 rounded-control bg-ink-100 px-3 text-xs font-semibold text-ink-900 disabled:opacity-60"><CircleStop size={16} />{stopping ? "Stopping" : "Stop"}</button>
-        ) : (
-          <button type="submit" disabled={!value.trim() || Boolean(timeError)} className="inline-flex min-h-11 items-center gap-2 rounded-control bg-accent px-3 text-xs font-semibold text-white hover:bg-accent-hover disabled:opacity-40"><Send size={16} />Send</button>
-        )}
-      </div>
+      {running ? (
+        <button type="button" onClick={onStop} disabled={stopping} aria-label={stopping ? "Stopping" : "Stop"} title={stopping ? "Stopping" : "Stop"} className="mb-0.5 inline-flex size-10 shrink-0 items-center justify-center rounded-full bg-ink-100 text-ink-900 disabled:opacity-60"><CircleStop size={17} /></button>
+      ) : (
+        <button type="submit" disabled={!value.trim()} aria-label="Send" title="Send" className="mb-0.5 inline-flex size-10 shrink-0 items-center justify-center rounded-full bg-accent text-white hover:bg-accent-hover disabled:bg-ink-700 disabled:text-ink-500"><Send size={17} /></button>
+      )}
     </form>
   );
 }
@@ -425,19 +361,14 @@ export function ChatPage() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedId = searchParams.get("session");
-  const [historyOpen, setHistoryOpen] = useState(true);
-  const [mobileHistory, setMobileHistory] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [evidence, setEvidence] = useState<EvidenceSelection | null>(null);
   const [draft, setDraft] = useState("");
-  const [attachment, setAttachment] = useState<ChatAttachment>({});
-  const [composerResetGeneration, setComposerResetGeneration] = useState(0);
   const [liveRuns, setLiveRuns] = useState<Record<string, LiveRun>>({});
   const [deleteErrors, setDeleteErrors] = useState<Record<string, Error>>({});
   const abortRefs = useRef(new Map<string, AbortController>());
   const submittingRef = useRef(false);
-  const historyTriggerRef = useRef<HTMLButtonElement | null>(null);
   const evidenceTriggerRef = useRef<HTMLElement | null>(null);
-  const historyDialogRef = useRef<HTMLDivElement | null>(null);
   const evidenceDialogRef = useRef<HTMLDivElement | null>(null);
   const conversationRef = useRef<HTMLDivElement | null>(null);
   const [isMobile, setIsMobile] = useState(false);
@@ -474,17 +405,13 @@ export function ChatPage() {
   }, []);
 
   useEffect(() => {
-    const modalOpen = isMobile && (mobileHistory || Boolean(evidence));
+    const modalOpen = isMobile && Boolean(evidence);
     const content = conversationRef.current;
     if (!content) return;
     content.inert = modalOpen;
     if (modalOpen) content.setAttribute("aria-hidden", "true");
     else content.removeAttribute("aria-hidden");
-  }, [evidence, isMobile, mobileHistory]);
-
-  useEffect(() => {
-    if (mobileHistory) historyDialogRef.current?.focus();
-  }, [mobileHistory]);
+  }, [evidence, isMobile]);
 
   useEffect(() => {
     if (evidence && isMobile) evidenceDialogRef.current?.focus();
@@ -496,13 +423,9 @@ export function ChatPage() {
   }, []);
 
   const newThread = () => {
-    setSearchParams({}); setDraft(""); setAttachment({}); setComposerResetGeneration((value) => value + 1); setEvidence(null); setMobileHistory(false);
+    setSearchParams({}); setDraft(""); setEvidence(null); setHistoryOpen(false);
   };
-  const selectThread = (id: string) => { setSearchParams({ session: id }); setMobileHistory(false); setEvidence(null); };
-  const closeHistory = () => {
-    setMobileHistory(false);
-    queueMicrotask(() => historyTriggerRef.current?.focus());
-  };
+  const selectThread = (id: string) => { setSearchParams({ session: id }); setHistoryOpen(false); setEvidence(null); };
   const openEvidence = (value: EvidenceSelection) => {
     evidenceTriggerRef.current = document.activeElement as HTMLElement | null;
     setEvidence(value);
@@ -548,17 +471,15 @@ export function ChatPage() {
         queryClient.setQueryData(["chat-session", id], created);
         setSearchParams({ session: id });
       }
-      const optimisticTurn: ChatTurn = { id: `local-${Date.now()}`, role: "user", content: message, created_at: new Date().toISOString(), attachment };
+      const optimisticTurn: ChatTurn = { id: `local-${Date.now()}`, role: "user", content: message, created_at: new Date().toISOString() };
       setLiveRuns((runs) => ({
         ...runs,
         [id as string]: { active: true, optimistic: optimisticTurn, persistedTurnIds: turns.map((turn) => turn.id), stream: emptyChatStream, error: null, stopping: false },
       }));
       submittingRef.current = false;
-      setAttachment({});
-      setComposerResetGeneration((value) => value + 1);
       const controller = new AbortController();
       abortRefs.current.set(id, controller);
-      await api.streamChatMessage(id, message, Object.keys(attachment).length ? attachment : undefined, (event) => {
+      await api.streamChatMessage(id, message, undefined, (event) => {
         setLiveRuns((runs) => {
           const run = runs[id as string];
           return run ? { ...runs, [id as string]: { ...run, stream: reduceChatEvent(run.stream, event) } } : runs;
@@ -667,20 +588,18 @@ export function ChatPage() {
 
   const unavailable = sessionsQ.error instanceof ApiError && sessionsQ.error.status === 503;
   const conversationStarted = displayTurns.length > 0 || active;
-  const rail = <HistoryRail sessions={sessionsQ.data ?? []} selected={selectedId} selectedFull={sessionQ.data} loading={sessionsQ.isLoading} deleteErrors={deleteErrors} onSelect={selectThread} onDelete={deleteThread} onDismissDeleteError={(id) => setDeleteErrors((errors) => {
+  const history = <HistoryList sessions={sessionsQ.data ?? []} selected={selectedId} selectedFull={sessionQ.data} loading={sessionsQ.isLoading} deleteErrors={deleteErrors} onSelect={selectThread} onDelete={deleteThread} onDismissDeleteError={(id) => setDeleteErrors((errors) => {
     if (!errors[id]) return errors;
     const next = { ...errors };
     delete next[id];
     return next;
-  })} onClose={() => { setHistoryOpen(false); closeHistory(); }} />;
+  })} />;
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-surface-sunken">
-      <TopBar title="DevOps Agent" subtitle={sessionQ.data?.status === "running" ? "Running" : ""} actions={<><button ref={historyTriggerRef} type="button" onClick={() => setMobileHistory(true)} aria-label="Open chat history" title="Open chat history" className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-control text-ink-300 hover:bg-ink-700 lg:hidden"><History size={16} /></button><button type="button" onClick={newThread} aria-label="New thread" title="New thread" className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-control text-ink-300 hover:bg-ink-700"><Plus size={16} /></button></>} />
+      <TopBar title="DevOps Agent" subtitle={sessionQ.data?.status === "running" ? "Running" : ""} actions={<><button type="button" onClick={() => setHistoryOpen(true)} aria-label="Open chat history" title="Open chat history" className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-control text-ink-300 hover:bg-ink-700"><History size={16} /></button><Link to="/agent/tools" aria-label="Open Tool catalog" title="Open Tool catalog" className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-control text-ink-300 hover:bg-ink-700"><Wrench size={16} /></Link></>} />
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
-        <div className={clsx("hidden shrink-0 overflow-hidden transition-[width] duration-300 lg:block", historyOpen ? "w-[300px]" : "w-0")}>{rail}</div>
-        {!historyOpen && <button type="button" onClick={() => setHistoryOpen(true)} aria-label="Open chat history" title="Open chat history" className="absolute left-3 top-3 z-sticky hidden rounded-control border border-ink-500/50 bg-surface p-2 text-ink-300 shadow-card hover:bg-ink-700 lg:block"><PanelLeftOpen size={16} /></button>}
-        {mobileHistory && <div ref={historyDialogRef} className="fixed inset-0 z-overlay lg:hidden" role="dialog" aria-modal="true" aria-label="Thread history" tabIndex={-1} onKeyDown={(event) => trapDialogFocus(event, closeHistory)}><button aria-label="Close history" className="absolute inset-0 bg-black/70" onClick={closeHistory} /><div className="absolute inset-y-0 left-0 w-[min(300px,85vw)] shadow-overlay">{rail}</div></div>}
+        {historyOpen && <Modal title="Thread history" size="lg" onClose={() => setHistoryOpen(false)} footer={<button type="button" className="btn inline-flex items-center gap-2" onClick={newThread}><Plus size={14} />New thread</button>}>{history}</Modal>}
 
         <div
           ref={conversationRef}
@@ -700,7 +619,7 @@ export function ChatPage() {
               <>
                 <div ref={scroll.scrollRef} onScroll={scroll.onScroll} className="h-full overflow-y-auto overscroll-contain px-4" role="log" aria-label="Conversation">
                   <div className={clsx("mx-auto max-w-3xl", conversationStarted ? "pb-52 pt-8" : "min-h-full pb-44 pt-[18vh]") }>
-                    {!conversationStarted && <div className="mx-auto max-w-lg text-center"><Bot size={28} className="mx-auto text-accent" aria-hidden /><h2 className="mt-3 text-base font-semibold text-ink-50">Versus DevOps Chat</h2><p className="mt-1 text-sm text-ink-300">Investigate your system with evidence from connected sources.</p><div className="mt-5 flex flex-wrap justify-center gap-2">{suggestions.map((suggestion) => <button key={suggestion} type="button" onClick={() => setDraft(suggestion)} className="rounded-control border border-ink-500/60 bg-surface px-3 py-2 text-left text-xs text-ink-200 hover:border-accent/60 hover:bg-accent-subtle">{suggestion}</button>)}</div></div>}
+                    {!conversationStarted && <div className="mx-auto max-w-lg text-center"><VersusChatLogo /><h2 className="mt-3 text-base font-semibold text-ink-50">Versus DevOps Chat</h2><div className="mt-5 flex flex-wrap justify-center gap-2">{suggestions.map((suggestion) => <button key={suggestion} type="button" onClick={() => setDraft(suggestion)} className="rounded-control border border-ink-500/60 bg-surface px-3 py-2 text-left text-xs text-ink-200 hover:border-accent/60 hover:bg-accent-subtle">{suggestion}</button>)}</div></div>}
                     {selectedId && sessionQ.isLoading && <div className="flex justify-center py-20 text-ink-400"><LoaderCircle className="animate-spin" aria-label="Loading conversation" /></div>}
                     {sessionQ.isError && <RetryableError error={sessionQ.error} onRetry={() => sessionQ.refetch()} retrying={sessionQ.isFetching} context="Couldn't load this conversation" />}
                     {displayTurns.map((turn) => <TurnView key={turn.id} turn={turn} onEvidence={openEvidence} />)}
@@ -714,7 +633,7 @@ export function ChatPage() {
                   </div>
                 </div>
                 {!scroll.following && <button type="button" onClick={scroll.scrollToBottom} className="absolute bottom-44 left-1/2 z-sticky flex -translate-x-1/2 items-center gap-2 rounded-full border border-ink-500/60 bg-surface px-3 py-2 text-xs text-ink-200 shadow-overlay"><ArrowDown size={14} />Scroll to bottom</button>}
-                <div className={clsx("absolute left-0 right-0 z-sticky mx-auto max-w-3xl px-4 transition-[bottom,transform] duration-300", conversationStarted ? "bottom-4" : "bottom-[20vh]")}><Composer value={draft} onChange={setDraft} onSubmit={send} running={active} stopping={selectedRun?.stopping ?? false} onStop={stop} attachment={attachment} onAttachmentChange={setAttachment} resetGeneration={composerResetGeneration} /></div>
+                <div className={clsx("absolute left-0 right-0 z-sticky mx-auto max-w-3xl px-4 transition-[bottom,transform] duration-300", conversationStarted ? "bottom-4" : "bottom-[20vh]")}><Composer value={draft} onChange={setDraft} onSubmit={send} running={active} stopping={selectedRun?.stopping ?? false} onStop={stop} /></div>
               </>
             )}
           </main>

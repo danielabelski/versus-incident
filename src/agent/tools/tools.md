@@ -97,7 +97,7 @@ RBAC, private endpoint policy, refresh behavior, and troubleshooting.
 The Kubernetes connector provides one operator card and read-only
 model tools: `get_cluster_overview`, `discover_k8s_resources`,
 `query_k8s_resources`, `get_k8s_resource`, `list_workloads`, `get_workload`,
-`get_k8s_topology`, `list_k8s_events`, and `get_pod_logs`.
+`list_k8s_events`, and `get_pod_logs`.
 
 Discovery assigns a canonical `resource_id` to each readable group, version,
 resource, and scope. API and model callers use that identifier rather than
@@ -125,7 +125,7 @@ caps, and log truncation are explicit in their responses; Search and Describe
 attribute omitted evidence with `encoded_result_size` and partial metadata.
 
 The connector exposes read APIs under `/api/admin/kubernetes` for overview,
-discovery, resource search/list/get/describe, topology, events, pod logs, and
+discovery, resource search/list/get/describe, events, pod logs, and
 optional usage. The UI is at `/agent/kubernetes`. Both require
 `infrastructure:view`. There are no apply, patch, delete, exec, terminal, proxy,
 rollout, or Helm paths.
@@ -134,7 +134,7 @@ The agent tool catalog intentionally owns connector navigation. Its Kubernetes
 card's **Open** action routes to `/agent/kubernetes`; the global sidebar does not
 duplicate connector-specific destinations. The page provides cluster freshness,
 namespace scope, health and capacity, warning events, cross-kind search,
-resource describe, and bounded typed topology.
+resource describe, and node inventory with scheduled pods.
 
 ## Tool configuration
 

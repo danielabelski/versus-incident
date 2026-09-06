@@ -70,7 +70,7 @@ export function NowPage() {
   // Shares ["incidents","list"] with the feed elsewhere — the loaded rows back
   // the latest-10 feed and the 24h trend sparklines below. Every NUMBER on the
   // page, though, comes from the server counts query (below), never this
-  // bounded page. 15s auto-refresh, paused while the tab is hidden.
+  // paginated collection. 15s auto-refresh, paused while the tab is hidden.
   const incidents = useQuery({
     queryKey: ["incidents", "list"],
     queryFn: () => api.listIncidents(),
@@ -149,8 +149,6 @@ export function NowPage() {
       resolved: pick(byStatus?.resolved),
     };
   }, [byStatus, origin]);
-  const feed = useMemo(() => scoped.slice(0, 10), [scoped]);
-
   // Most recently resolved incident — context for the all-clear banner.
   const lastResolved = useMemo(
     () =>
@@ -188,6 +186,7 @@ export function NowPage() {
     };
   }, [scoped, nowTick]);
 
+  const feed = scoped.slice(0, 10);
   const keys = useTableKeys({
     size: feed.length,
     onOpen: (i) => navigate(`/incidents/${feed[i].id}`),
@@ -438,6 +437,7 @@ export function NowPage() {
               </Link>
             </div>
             <div
+              role="region"
               aria-label="Incident feed — j/k to move, Enter to open"
               className="overflow-x-auto"
               {...keys.containerProps}

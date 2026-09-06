@@ -52,6 +52,7 @@ function renderPage(url = "/agent/chat") {
 }
 
 beforeEach(() => {
+  document.documentElement.removeAttribute("data-theme");
   Object.defineProperty(window, "matchMedia", {
     value: vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })),
     configurable: true,
@@ -82,8 +83,20 @@ describe("ChatPage", () => {
     vi.mocked(api.listChatSessions).mockResolvedValue([baseSession]);
     vi.mocked(api.getChatSession).mockResolvedValue(full);
     renderPage("/agent/chat?session=session-1");
+    expect(await screen.findAllByText("Investigate checkout latency")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Open chat history" }));
     expect(await screen.findAllByText("Investigate checkout latency")).toHaveLength(2);
     expect(api.getChatSession).toHaveBeenCalledWith("session-1");
+  });
+
+  it("shows history and Tool catalog controls with the theme-aware Versus logo", async () => {
+    renderPage();
+    expect(screen.getByRole("button", { name: "Open chat history" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Open Tool catalog" }).getAttribute("href")).toBe("/agent/tools");
+    const logo = screen.getByRole("img", { name: "Versus" }) as HTMLImageElement;
+    expect(logo.src).toContain("/versus-logo-light.svg");
+    document.documentElement.setAttribute("data-theme", "light");
+    await waitFor(() => expect(logo.src).toContain("/versus-logo-dark.svg"));
   });
 
   it("creates, streams, refetches, and renders the final assistant once", async () => {
@@ -108,20 +121,19 @@ describe("ChatPage", () => {
     expect(api.streamChatMessage).toHaveBeenCalledWith("session-1", "What changed?", undefined, expect.any(Function), expect.any(AbortSignal));
   });
 
-  it("sends context attachments without file upload", async () => {
+  it("uses a minimal icon-only composer without attachment or budget controls", async () => {
     renderPage("/agent/chat?session=session-1");
-    await screen.findByLabelText("Message");
-    fireEvent.click(screen.getByRole("button", { name: "Attach context" }));
-    fireEvent.change(screen.getByLabelText("Service context"), { target: { value: "checkout" } });
-    fireEvent.change(screen.getByLabelText("Incident ID context"), { target: { value: "inc-42" } });
-    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Explain this" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    await waitFor(() => expect(api.streamChatMessage).toHaveBeenCalled());
-    expect(vi.mocked(api.streamChatMessage).mock.calls[0][2]).toEqual({
-      service: "checkout",
-      incident: { id: "inc-42" },
-    });
-    expect(screen.queryByLabelText(/upload/i)).toBeNull();
+    const message = await screen.findByLabelText("Message");
+    expect(message.closest("form")?.className).not.toContain("focus-within:border");
+    expect(message.className).toContain("focus-visible:outline-none");
+    expect((message as HTMLTextAreaElement).style.outline).toBe("none");
+    const send = screen.getByRole("button", { name: "Send" });
+    expect(send.textContent).toBe("");
+    expect(screen.queryByRole("button", { name: "Attach context" })).toBeNull();
+    expect(screen.queryByText(/letters left/)).toBeNull();
+    fireEvent.change(message, { target: { value: "Explain this" } });
+    fireEvent.keyDown(message, { key: "Enter" });
+    await waitFor(() => expect(api.streamChatMessage).toHaveBeenCalledWith("session-1", "Explain this", undefined, expect.any(Function), expect.any(AbortSignal)));
   });
 
   it("requests cancellation and keeps reading through run_cancelled", async () => {
@@ -182,36 +194,6 @@ describe("ChatPage", () => {
     expect(api.streamChatMessage).toHaveBeenCalledTimes(1);
   });
 
-  it("blocks one-sided and reversed time ranges with actionable errors", async () => {
-    renderPage("/agent/chat?session=session-1");
-    fireEvent.click(await screen.findByRole("button", { name: "Attach context" }));
-    fireEvent.change(screen.getByLabelText("Context start"), { target: { value: "2026-08-28T10:00" } });
-    expect(screen.getByRole("alert").textContent).toContain("both a start and an end");
-    fireEvent.change(screen.getByLabelText("Context end"), { target: { value: "2026-08-28T09:00" } });
-    expect(screen.getByRole("alert").textContent).toContain("after start");
-    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Do not send" } });
-    expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(api.streamChatMessage).not.toHaveBeenCalled();
-  });
-
-  it("clears displayed time context before a second send", async () => {
-    renderPage("/agent/chat?session=session-1");
-    fireEvent.click(await screen.findByRole("button", { name: "Attach context" }));
-    fireEvent.change(screen.getByLabelText("Context start"), { target: { value: "2026-08-28T10:00" } });
-    fireEvent.change(screen.getByLabelText("Context end"), { target: { value: "2026-08-28T11:00" } });
-    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "First" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    await waitFor(() => expect(api.streamChatMessage).toHaveBeenCalledTimes(1));
-    expect((screen.getByLabelText("Context start") as HTMLInputElement).value).toBe("");
-    expect((screen.getByLabelText("Context end") as HTMLInputElement).value).toBe("");
-
-    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Second" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    await waitFor(() => expect(api.streamChatMessage).toHaveBeenCalledTimes(2));
-    expect(vi.mocked(api.streamChatMessage).mock.calls[0][2]).toMatchObject({ time_range: expect.any(Object) });
-    expect(vi.mocked(api.streamChatMessage).mock.calls[1][2]).toBeUndefined();
-  });
-
   it("hides the optimistic turn after a mid-run refetch persists it", async () => {
     let finish: (() => void) | undefined;
     vi.mocked(api.streamChatMessage).mockImplementation(async () => {
@@ -244,6 +226,7 @@ describe("ChatPage", () => {
     fireEvent.change(await screen.findByLabelText("Message"), { target: { value: "Question A" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     expect(await screen.findByText("stream failed in A")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Open chat history" }));
     fireEvent.click(screen.getAllByRole("button", { name: /Chat ·/ }).at(-1) as HTMLButtonElement);
     expect((await screen.findAllByText("Thread B")).length).toBeGreaterThan(0);
     expect(screen.queryByText("stream failed in A")).toBeNull();
@@ -276,13 +259,45 @@ describe("ChatPage", () => {
     expect(screen.getByRole("alert").textContent).toContain("stream conflict");
   });
 
-  it("caps composer input by UTF-8 letters", async () => {
+  it("caps composer input without displaying an implementation budget", async () => {
     renderPage("/agent/chat?session=session-1");
     const input = await screen.findByLabelText("Message");
     fireEvent.change(input, { target: { value: "😀".repeat(3000) } });
     const value = (input as HTMLTextAreaElement).value;
     expect(new TextEncoder().encode(value).byteLength).toBe(8192);
-    expect(screen.getByText("0 letters left")).toBeTruthy();
+    expect(screen.queryByText(/letters left/)).toBeNull();
+  });
+
+  it("does not render internal session discovery evidence", async () => {
+    vi.mocked(api.listChatSessions).mockResolvedValue([baseSession]);
+    vi.mocked(api.getChatSession).mockResolvedValue({
+      ...baseSession,
+      turns: [
+        { id: "seed", role: "compaction", content: '{"kind":"session_discovery","tools":[{"Name":"get_system_overview"}]}', created_at: baseSession.created_at },
+        { id: "user", role: "user", content: "What changed?", created_at: baseSession.created_at },
+      ],
+    });
+    renderPage("/agent/chat?session=session-1");
+    expect(await screen.findByText("What changed?")).toBeTruthy();
+    expect(screen.queryByText(/session_discovery/)).toBeNull();
+    expect(screen.queryByText(/get_system_overview/)).toBeNull();
+  });
+
+  it("turns legacy no-answer records into actionable model guidance", async () => {
+    vi.mocked(api.listChatSessions).mockResolvedValue([baseSession]);
+    vi.mocked(api.getChatSession).mockResolvedValue({
+      ...baseSession,
+      status: "failed",
+      turns: [
+        { id: "user", role: "user", content: "What changed?", created_at: baseSession.created_at },
+        { id: "failure", role: "compaction", content: "Chat run ended without an assistant answer.", created_at: baseSession.updated_at },
+      ],
+    });
+    renderPage("/agent/chat?session=session-1");
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("The model could not produce a response.");
+    expect(alert.textContent).toContain("provider credentials");
+    expect(screen.queryByText("Chat run ended without an assistant answer.")).toBeNull();
   });
 
   it("renders live output only in its session and restores it when switching back", async () => {
@@ -301,28 +316,24 @@ describe("ChatPage", () => {
     fireEvent.change(await screen.findByLabelText("Message"), { target: { value: "Question A" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(emit).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Open chat history" }));
     fireEvent.click(screen.getAllByRole("button", { name: /Chat ·/ })[0]);
     emit?.({ seq: 2, at: "", kind: "model_delta", delta: "Only for A" });
     expect((await screen.findAllByText("Thread B")).length).toBeGreaterThan(0);
     expect(screen.queryByText("Only for A")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Open chat history" }));
     fireEvent.click(screen.getAllByRole("button", { name: /Chat ·/ })[0]);
     expect(await screen.findByText("Only for A")).toBeTruthy();
     finish?.();
   });
 
-  it("contains mobile drawer focus, makes background inert, and restores the trigger", async () => {
-    const listeners = new Set<() => void>();
-    const media = { matches: true, addEventListener: (_type: string, listener: () => void) => listeners.add(listener), removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener) };
-    Object.defineProperty(window, "matchMedia", { value: vi.fn(() => media), configurable: true });
+  it("traps history modal focus and restores the trigger", async () => {
     renderPage();
     const trigger = screen.getByRole("button", { name: "Open chat history" });
-    const background = screen.getByRole("log", { name: "Conversation" }).parentElement?.parentElement as HTMLElement;
     trigger.focus();
     fireEvent.click(trigger);
     const dialog = await screen.findByRole("dialog", { name: "Thread history" });
-    expect(document.activeElement).toBe(dialog);
-    expect(background.inert).toBe(true);
-    expect(background.getAttribute("aria-hidden")).toBe("true");
+    expect(dialog.contains(document.activeElement)).toBe(true);
     fireEvent.keyDown(dialog, { key: "Tab" });
     expect(dialog.contains(document.activeElement)).toBe(true);
     fireEvent.keyDown(dialog, { key: "Escape" });
@@ -418,6 +429,7 @@ describe("ChatPage", () => {
   it("deletes a thread and returns the selected view to empty state", async () => {
     vi.mocked(api.listChatSessions).mockResolvedValue([baseSession]);
     renderPage("/agent/chat?session=session-1");
+    fireEvent.click(screen.getByRole("button", { name: "Open chat history" }));
     fireEvent.click(await screen.findByRole("button", { name: "Delete thread" }));
     await waitFor(() => expect(api.deleteChatSession).toHaveBeenCalledWith("session-1"));
     expect(await screen.findByText("Versus DevOps Chat")).toBeTruthy();
@@ -429,6 +441,7 @@ describe("ChatPage", () => {
       .mockRejectedValueOnce(new ApiError(500, "delete failed"))
       .mockResolvedValueOnce(undefined);
     renderPage("/agent/chat?session=session-1");
+    fireEvent.click(screen.getByRole("button", { name: "Open chat history" }));
     fireEvent.click(await screen.findByRole("button", { name: "Delete thread" }));
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("delete failed");

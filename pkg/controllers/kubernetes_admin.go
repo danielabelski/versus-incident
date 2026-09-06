@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"errors"
+	"log"
 	"strconv"
 
 	"github.com/VersusControl/versus-incident/pkg/core"
@@ -43,7 +44,6 @@ func (controller *KubernetesAdminController) Register(router fiber.Router) {
 	group.Get("/resources/:resourceId/:name/describe", controller.describe)
 	group.Get("/workloads", controller.workloads)
 	group.Get("/workloads/:kind/:name", controller.workload)
-	group.Get("/topology", controller.topology)
 	group.Get("/events", controller.events)
 	group.Get("/pods/:namespace/:name/logs", controller.logs)
 	group.Get("/usage", controller.usage)
@@ -99,10 +99,6 @@ func (controller *KubernetesAdminController) describe(ctx *fiber.Ctx) error {
 	value, err := requestKubernetesService(ctx).Describe(ctx.UserContext(), ctx.Params("resourceId"), ctx.Query("namespace"), ctx.Params("name"))
 	return writeKubernetes(ctx, value, err)
 }
-func (controller *KubernetesAdminController) topology(ctx *fiber.Ctx) error {
-	value, err := requestKubernetesService(ctx).Topology(ctx.UserContext(), ctx.Query("namespace"), queryInt(ctx, "node_cap"), queryInt(ctx, "edge_cap"))
-	return writeKubernetes(ctx, value, err)
-}
 func (controller *KubernetesAdminController) workloads(ctx *fiber.Ctx) error {
 	value, err := requestKubernetesService(ctx).ListWorkloads(ctx.UserContext(), ctx.Query("namespace"), ctx.Query("kind"), queryInt(ctx, "limit"))
 	return writeKubernetes(ctx, value, err)
@@ -135,18 +131,27 @@ func writeKubernetes(ctx *fiber.Ctx, value any, err error) error {
 	if err == nil {
 		return ctx.JSON(value)
 	}
+	detail := kubernetes.DiagnoseError(err)
+	log.Printf("kubernetes admin failure: code=%s retryable=%t", detail.Code, detail.Retryable)
+	status := fiber.StatusBadGateway
 	switch {
 	case errors.Is(err, kubernetes.ErrInvalidArguments), errors.Is(err, kubernetes.ErrInvalidEndpoint):
-		return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid arguments"})
+		status = fiber.StatusBadRequest
 	case errors.Is(err, kubernetes.ErrForbidden):
-		return ctx.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden", "partial": true})
-	case errors.Is(err, kubernetes.ErrUnauthorized):
-		return ctx.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "cluster authentication failed"})
+		status = fiber.StatusForbidden
 	case errors.Is(err, kubernetes.ErrNotFound):
-		return ctx.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "resource unavailable"})
-	case errors.Is(err, context.DeadlineExceeded):
-		return ctx.Status(fiber.StatusGatewayTimeout).JSON(fiber.Map{"error": "Kubernetes read timed out"})
-	default:
-		return ctx.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "Kubernetes read failed"})
+		status = fiber.StatusNotFound
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, kubernetes.ErrOperationBudget):
+		status = fiber.StatusGatewayTimeout
 	}
+	response := fiber.Map{
+		"error":     detail.Message,
+		"code":      detail.Code,
+		"action":    detail.Action,
+		"retryable": detail.Retryable,
+	}
+	if errors.Is(err, kubernetes.ErrForbidden) {
+		response["partial"] = true
+	}
+	return ctx.Status(status).JSON(response)
 }

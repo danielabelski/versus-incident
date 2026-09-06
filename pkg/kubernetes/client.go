@@ -25,14 +25,15 @@ const (
 )
 
 var (
-	ErrInvalidEndpoint  = errors.New("kubernetes: invalid endpoint")
-	ErrUnauthorized     = errors.New("kubernetes: unauthorized")
-	ErrForbidden        = errors.New("kubernetes: forbidden")
-	ErrNotFound         = errors.New("kubernetes: not found")
-	ErrResponseTooLarge = errors.New("kubernetes: response too large")
-	ErrRedirect         = errors.New("kubernetes: redirect refused")
-	ErrInvalidArguments = errors.New("kubernetes: invalid arguments")
-	ErrOperationBudget  = errors.New("kubernetes: operation budget exhausted")
+	ErrInvalidEndpoint       = errors.New("kubernetes: invalid endpoint")
+	ErrUnauthorized          = errors.New("kubernetes: unauthorized")
+	ErrForbidden             = errors.New("kubernetes: forbidden")
+	ErrNotFound              = errors.New("kubernetes: not found")
+	ErrResponseTooLarge      = errors.New("kubernetes: response too large")
+	ErrRedirect              = errors.New("kubernetes: redirect refused")
+	ErrInvalidArguments      = errors.New("kubernetes: invalid arguments")
+	ErrOperationBudget       = errors.New("kubernetes: operation budget exhausted")
+	ErrCredentialUnavailable = errors.New("kubernetes: credential unavailable")
 )
 
 // Config defines one Kubernetes API connection. Credentials are read from

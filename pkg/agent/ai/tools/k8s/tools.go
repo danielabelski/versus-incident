@@ -9,7 +9,7 @@ import (
 	"github.com/VersusControl/versus-incident/pkg/kubernetes"
 )
 
-var toolNames = []string{"get_cluster_overview", "discover_k8s_resources", "query_k8s_resources", "get_k8s_resource", "list_workloads", "get_workload", "get_k8s_topology", "list_k8s_events", "get_pod_logs"}
+var toolNames = []string{"get_cluster_overview", "discover_k8s_resources", "query_k8s_resources", "get_k8s_resource", "list_workloads", "get_workload", "list_k8s_events", "get_pod_logs"}
 
 // New constructs all Kubernetes model tools over one shared application service.
 func New(service *kubernetes.Service) []core.Tool {
@@ -117,10 +117,6 @@ func (tool *tool) Invoke(ctx context.Context, raw json.RawMessage) (*core.ToolRe
 		} else {
 			data, err = tool.service.GetWorkload(ctx, args.Namespace, args.Kind, args.Name)
 		}
-	case "get_k8s_topology":
-		var result kubernetes.Topology
-		result, err = tool.service.Topology(ctx, args.Namespace, args.NodeCap, args.EdgeCap)
-		data, found = result, len(result.Nodes) > 0
 	case "list_k8s_events":
 		var result kubernetes.ResourcePage
 		result, err = tool.service.ListEvents(ctx, kubernetes.EventOptions{Namespace: args.Namespace, Type: args.EventType, Kind: args.ObjectKind, Name: args.ObjectName, UID: args.ObjectUID, Continue: args.Continue, Limit: args.Limit})
@@ -164,8 +160,6 @@ type arguments struct {
 	Fields       string `json:"fields"`
 	Continue     string `json:"continue"`
 	Limit        int    `json:"limit"`
-	NodeCap      int    `json:"node_cap"`
-	EdgeCap      int    `json:"edge_cap"`
 	Previous     bool   `json:"previous"`
 	SinceSeconds int    `json:"since_seconds"`
 	TailLines    int    `json:"tail_lines"`
@@ -183,7 +177,7 @@ var descriptions = map[string]string{
 	"get_cluster_overview": "Summarize Kubernetes cluster health and capacity.", "discover_k8s_resources": "Discover readable Kubernetes resources and canonical resource IDs.",
 	"query_k8s_resources": "Search or list one discovered Kubernetes resource.", "get_k8s_resource": "Get one safely projected Kubernetes resource.",
 	"list_workloads": "List bounded Kubernetes workloads.", "get_workload": "Inspect one safely projected Kubernetes workload.",
-	"get_k8s_topology": "Inspect bounded Kubernetes ownership and scheduling topology.", "list_k8s_events": "List bounded Kubernetes events.", "get_pod_logs": "Read bounded logs for one pod, optionally selecting a container.",
+	"list_k8s_events": "List bounded Kubernetes events.", "get_pod_logs": "Read bounded logs for one pod, optionally selecting a container.",
 }
 var schemas = map[string]map[string]any{
 	"get_cluster_overview": {}, "discover_k8s_resources": {},
@@ -191,7 +185,6 @@ var schemas = map[string]map[string]any{
 	"get_k8s_resource":    {"resource_id": stringProperty(), "namespace": namespacedResourceProperty(), "name": stringProperty(), "diagnostic": map[string]any{"type": "boolean"}},
 	"list_workloads":      {"namespace": stringProperty(), "kind": map[string]any{"type": "string", "enum": []string{"Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob", "Pod"}}, "limit": integerProperty()},
 	"get_workload":        {"namespace": stringProperty(), "kind": map[string]any{"type": "string", "enum": []string{"Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob", "Pod"}}, "name": stringProperty()},
-	"get_k8s_topology":    {"namespace": stringProperty(), "node_cap": integerProperty(), "edge_cap": integerProperty()},
 	"list_k8s_events":     {"namespace": stringProperty(), "event_type": map[string]any{"type": "string", "enum": []string{"Warning", "Normal"}}, "object_kind": stringProperty(), "object_name": stringProperty(), "object_uid": stringProperty(), "continue": stringProperty(), "limit": integerProperty()},
 	"get_pod_logs":        {"namespace": stringProperty(), "name": stringProperty(), "container": map[string]any{"type": "string", "maxLength": 253, "description": "Optional for single-container pods; required for multi-container pods."}, "previous": map[string]any{"type": "boolean"}, "since_seconds": integerProperty(), "tail_lines": integerProperty()},
 }
@@ -238,4 +231,4 @@ func safeToolError(err error) error {
 }
 func lookupDisplay(name string) (string, bool) { value, ok := displayNames[name]; return value, ok }
 
-var displayNames = map[string]string{"get_cluster_overview": "Cluster overview", "discover_k8s_resources": "Discover Kubernetes resources", "query_k8s_resources": "Query Kubernetes resources", "get_k8s_resource": "Kubernetes resource details", "list_workloads": "List workloads", "get_workload": "Workload details", "get_k8s_topology": "Kubernetes topology", "list_k8s_events": "Kubernetes events", "get_pod_logs": "Pod logs"}
+var displayNames = map[string]string{"get_cluster_overview": "Cluster overview", "discover_k8s_resources": "Discover Kubernetes resources", "query_k8s_resources": "Query Kubernetes resources", "get_k8s_resource": "Kubernetes resource details", "list_workloads": "List workloads", "get_workload": "Workload details", "list_k8s_events": "Kubernetes events", "get_pod_logs": "Pod logs"}

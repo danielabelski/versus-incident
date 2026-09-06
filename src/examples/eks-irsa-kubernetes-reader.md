@@ -228,11 +228,8 @@ agent:
     enable: true
   tools:
     kubernetes:
-      clusterID: production
       endpoint: https://API_ID.eks.us-east-1.amazonaws.com
       caData: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t...
-      endpointCIDRs:
-        - 10.20.0.0/16
       auth:
         mode: eks
         eks:
@@ -250,7 +247,7 @@ Leave `roleARN` empty when the IRSA role itself is the principal in the EKS acce
 entry. Set it only for an intentional second-hop role, and grant the IRSA role
 `sts:AssumeRole` for that exact ARN.
 
-For a public EKS endpoint, remove `endpointCIDRs`. For a private endpoint, set
+**Note:** For a private endpoint, set
 `endpointCIDRs` to the actual control-plane address range. Use
 `allowPrivateNetworks: true` only when maintaining a narrow CIDR list is not
 possible, because it permits any private destination that the endpoint hostname
@@ -362,7 +359,7 @@ create, update, patch, delete, exec, proxy, rollout, or Helm permission.
 
 Secrets are deliberately omitted. ConfigMaps are readable, but Versus projects
 only key names and metadata, never values. Add Secret reads only if referenced
-Secret key names are required in topology. Add Gateway API `gateways` and
+Secret key names are required in resource reports. Add Gateway API `gateways` and
 `httproutes` only when those CRDs are installed.
 
 For namespace-only access, replace the ClusterRoleBinding with RoleBindings in

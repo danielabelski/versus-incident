@@ -431,11 +431,19 @@ func TestOverviewUsesFullPreCapMetricsFreshnessAndTotals(t *testing.T) {
 		case "/apis/metrics.k8s.io/v1beta1":
 			writeJSON(writer, map[string]any{"resources": []any{map[string]any{"name": "nodes", "kind": "NodeMetrics", "verbs": []string{"get", "list"}}}})
 		case "/apis/metrics.k8s.io/v1beta1/nodes":
-			if request.URL.Query().Get("continue") == "node-page-2" {
-				writeJSON(writer, map[string]any{"items": metrics[500:]})
-				return
+			if request.URL.Query().Get("limit") != strconv.Itoa(listAllPageSize) {
+				t.Errorf("metrics page limit = %q", request.URL.Query().Get("limit"))
 			}
-			writeJSON(writer, map[string]any{"metadata": map[string]any{"continue": "node-page-2"}, "items": metrics[:500]})
+			start := 0
+			if continuation := request.URL.Query().Get("continue"); continuation != "" {
+				start, _ = strconv.Atoi(continuation)
+			}
+			end := min(start+listAllPageSize, len(metrics))
+			metadata := map[string]any{}
+			if end < len(metrics) {
+				metadata["continue"] = strconv.Itoa(end)
+			}
+			writeJSON(writer, map[string]any{"metadata": metadata, "items": metrics[start:end]})
 		default:
 			http.NotFound(writer, request)
 		}
@@ -449,6 +457,86 @@ func TestOverviewUsesFullPreCapMetricsFreshnessAndTotals(t *testing.T) {
 	overview, err := service.Overview(context.Background())
 	if err != nil || overview.UsageSource != "node_metrics" || overview.MetricsFresh || overview.MetricsStatus != "stale" || overview.UsageCPU != "501" || !overview.Truncated || !containsString(overview.Omitted, "metrics.k8s.io~v1beta1~nodes") {
 		t.Fatalf("overview = %#v err=%v", overview, err)
+	}
+}
+
+func TestOverviewCountsPodsAcrossSafeInternalPages(t *testing.T) {
+	const podCount = 6501
+	var podRequests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api":
+			writeJSON(writer, map[string]any{"versions": []string{"v1"}})
+		case "/apis":
+			writeJSON(writer, map[string]any{"groups": []any{}})
+		case "/api/v1":
+			writeJSON(writer, map[string]any{"resources": []any{map[string]any{"name": "pods", "kind": "Pod", "namespaced": true, "verbs": []string{"get", "list"}}}})
+		case "/api/v1/pods":
+			podRequests.Add(1)
+			if request.URL.Query().Get("limit") != strconv.Itoa(listAllPageSize) {
+				t.Errorf("pod page limit = %q", request.URL.Query().Get("limit"))
+			}
+			start := 0
+			if continuation := request.URL.Query().Get("continue"); continuation != "" {
+				start, _ = strconv.Atoi(continuation)
+			}
+			end := min(start+listAllPageSize, podCount)
+			items := make([]any, 0, end-start)
+			for index := start; index < end; index++ {
+				items = append(items, podFixture("pod-"+strconv.Itoa(index)))
+			}
+			metadata := map[string]any{}
+			if end < podCount {
+				metadata["continue"] = strconv.Itoa(end)
+			}
+			writeJSON(writer, map[string]any{"metadata": metadata, "items": items})
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	overview, err := newTestService(t, server.URL, Scope{ClusterID: "cluster-a"}).Overview(context.Background())
+	if err != nil || overview.Pods != podCount || podRequests.Load() != 66 || containsString(overview.Omitted, "core~v1~pods") || containsString(overview.Omitted, "budget_exhausted") {
+		t.Fatalf("overview=%#v pod requests=%d err=%v", overview, podRequests.Load(), err)
+	}
+	for _, partial := range overview.Partial {
+		if partial.Class == "budget_exhausted" {
+			t.Fatalf("overview unexpectedly exhausted its request budget: %#v", overview)
+		}
+	}
+}
+
+func TestOverviewMarksFailedPodCollectionUnavailableAndPreservesDiscoveryPartial(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api":
+			writeJSON(writer, map[string]any{"versions": []string{"v1"}})
+		case "/apis":
+			writeJSON(writer, map[string]any{"groups": []any{map[string]any{"name": "optional.example.io", "preferredVersion": map[string]any{"version": "v1"}}}})
+		case "/api/v1":
+			writeJSON(writer, map[string]any{"resources": []any{map[string]any{"name": "pods", "kind": "Pod", "namespaced": true, "verbs": []string{"get", "list"}}}})
+		case "/apis/optional.example.io/v1":
+			http.Error(writer, "forbidden", http.StatusForbidden)
+		case "/api/v1/pods":
+			http.Error(writer, "response too large", http.StatusRequestEntityTooLarge)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	overview, err := newTestService(t, server.URL, Scope{ClusterID: "cluster-a"}).Overview(context.Background())
+	if err != nil || overview.Pods != 0 || !overview.Truncated || !containsString(overview.Omitted, "core~v1~pods") {
+		t.Fatalf("overview=%#v err=%v", overview, err)
+	}
+	foundPodFailure, foundDiscoveryFailure := false, false
+	for _, partial := range overview.Partial {
+		foundPodFailure = foundPodFailure || partial.ResourceID == "core~v1~pods"
+		foundDiscoveryFailure = foundDiscoveryFailure || partial.Scope == "discovery"
+	}
+	if !foundPodFailure || !foundDiscoveryFailure {
+		t.Fatalf("partial failures=%#v", overview.Partial)
 	}
 }
 
@@ -579,10 +667,6 @@ func TestTerminalEncodedSizeTruncationPropagatesThroughAggregates(t *testing.T) 
 	if err != nil || !overview.Truncated || overview.UsageSource != "unavailable" || !containsString(overview.Omitted, "core~v1~pods") || len(overview.Partial) == 0 {
 		t.Fatalf("overview = %#v err=%v", overview, err)
 	}
-	topology, err := service.Topology(context.Background(), "default", 20, 20)
-	if err != nil || !topology.Truncated || !containsString(topology.Omitted, "core~v1~pods") || !containsString(topology.Omitted, "category=pod") || len(topology.Partial) == 0 {
-		t.Fatalf("topology = %#v err=%v", topology, err)
-	}
 	workload, err := service.GetWorkload(context.Background(), "default", "Pod", "needle-0")
 	if err != nil || !workload.Truncated || !containsString(workload.Omitted, "encoded_result_size") || len(workload.Partial) == 0 {
 		t.Fatalf("workload = %#v err=%v", workload, err)
@@ -598,65 +682,6 @@ func TestTerminalEncodedSizeTruncationPropagatesThroughAggregates(t *testing.T) 
 	}
 	if continuationRequests.Load() != 0 {
 		t.Fatalf("aggregates reused continuation after local item drop: %d requests", continuationRequests.Load())
-	}
-}
-
-func TestDeriveTopologyEdgesCoversObservedIntentAndOwnershipBreadth(t *testing.T) {
-	resources := map[string]ProjectedResource{}
-	addResource := func(kind, namespace, name string, summary map[string]any, labels map[string]string, owners ...ObjectRef) {
-		resources[objectID(kind, namespace, name)] = ProjectedResource{Kind: kind, Namespace: namespace, Name: name, Summary: summary, Labels: labels, Owners: owners}
-	}
-	addResource("Deployment", "payments", "api", map[string]any{}, nil)
-	addResource("ReplicaSet", "payments", "api-rs", map[string]any{}, nil, ObjectRef{Kind: "Deployment", Name: "api"})
-	addResource("Pod", "payments", "api-1", map[string]any{"config_maps": []string{"api-config"}, "secrets": []string{"api-secret"}, "persistent_volume_claims": []string{"api-data"}}, map[string]string{"app": "api"}, ObjectRef{Kind: "ReplicaSet", Name: "api-rs"})
-	addResource("Pod", "payments", "fallback-1", map[string]any{}, map[string]string{"app": "fallback"})
-	addResource("Service", "payments", "api", map[string]any{"selector": map[string]string{"app": "api"}}, nil)
-	addResource("Service", "payments", "fallback", map[string]any{"selector": map[string]string{"app": "fallback"}}, nil)
-	addResource("EndpointSlice", "payments", "api-slice", map[string]any{"services": []string{"api"}, "pods": []string{"api-1"}}, nil)
-	addResource("Ingress", "payments", "public", map[string]any{"services": []string{"api"}}, nil)
-	addResource("Gateway", "payments", "edge", map[string]any{}, nil)
-	addResource("HTTPRoute", "payments", "api-route", map[string]any{"gateways": []string{"edge"}, "services": []string{"api"}}, nil)
-	addResource("HorizontalPodAutoscaler", "payments", "api-scale", map[string]any{"target": ObjectRef{Kind: "Deployment", Name: "api"}}, nil)
-	addResource("PodDisruptionBudget", "payments", "api-budget", map[string]any{"selector": map[string]string{"app": "api"}}, nil)
-	addResource("ConfigMap", "payments", "api-config", map[string]any{}, nil, ObjectRef{Kind: "Widget", Name: "owner"})
-	addResource("Secret", "payments", "api-secret", map[string]any{}, nil)
-	addResource("PersistentVolumeClaim", "payments", "api-data", map[string]any{"persistent_volumes": []string{"pv-api"}}, nil)
-	addResource("PersistentVolume", "", "pv-api", map[string]any{"storage_classes": []string{"fast"}}, nil)
-	addResource("StorageClass", "", "fast", map[string]any{}, nil)
-	addResource("Widget", "payments", "owner", map[string]any{}, nil)
-
-	edges := map[TopologyEdge]bool{}
-	deriveTopologyEdges(resources, func(edge TopologyEdge) {
-		if _, from := resources[edge.From]; from {
-			if _, to := resources[edge.To]; to {
-				edges[edge] = true
-			}
-		}
-	})
-	wanted := []TopologyEdge{
-		{From: objectID("Service", "payments", "api"), To: objectID("EndpointSlice", "payments", "api-slice"), Type: "routes_to"},
-		{From: objectID("EndpointSlice", "payments", "api-slice"), To: objectID("Pod", "payments", "api-1"), Type: "routes_to"},
-		{From: objectID("Service", "payments", "fallback"), To: objectID("Pod", "payments", "fallback-1"), Type: "selects", Intent: true},
-		{From: objectID("Ingress", "payments", "public"), To: objectID("Service", "payments", "api"), Type: "routes_to"},
-		{From: objectID("Gateway", "payments", "edge"), To: objectID("HTTPRoute", "payments", "api-route"), Type: "attaches"},
-		{From: objectID("HTTPRoute", "payments", "api-route"), To: objectID("Service", "payments", "api"), Type: "routes_to"},
-		{From: objectID("HorizontalPodAutoscaler", "payments", "api-scale"), To: objectID("Deployment", "payments", "api"), Type: "scales"},
-		{From: objectID("PodDisruptionBudget", "payments", "api-budget"), To: objectID("Pod", "payments", "api-1"), Type: "protects"},
-		{From: objectID("Pod", "payments", "api-1"), To: objectID("ConfigMap", "payments", "api-config"), Type: "references"},
-		{From: objectID("Pod", "payments", "api-1"), To: objectID("Secret", "payments", "api-secret"), Type: "references"},
-		{From: objectID("Pod", "payments", "api-1"), To: objectID("PersistentVolumeClaim", "payments", "api-data"), Type: "mounts"},
-		{From: objectID("PersistentVolumeClaim", "payments", "api-data"), To: objectID("PersistentVolume", "", "pv-api"), Type: "binds"},
-		{From: objectID("PersistentVolume", "", "pv-api"), To: objectID("StorageClass", "", "fast"), Type: "provisions"},
-		{From: objectID("Deployment", "payments", "api"), To: objectID("Pod", "payments", "api-1"), Type: "owns"},
-		{From: objectID("Widget", "payments", "owner"), To: objectID("ConfigMap", "payments", "api-config"), Type: "owns"},
-	}
-	for _, edge := range wanted {
-		if !edges[edge] {
-			t.Errorf("missing topology edge %#v; got %#v", edge, edges)
-		}
-	}
-	if edges[TopologyEdge{From: objectID("Service", "payments", "api"), To: objectID("Pod", "payments", "api-1"), Type: "selects", Intent: true}] {
-		t.Fatal("selector intent edge emitted despite observed EndpointSlice")
 	}
 }
 
@@ -677,7 +702,7 @@ func workloadFixture() map[string]any {
 	}
 }
 
-func TestServiceSafeProjectionTopologyPartialAndLogs(t *testing.T) {
+func TestServiceSafeProjectionPartialOverviewAndLogs(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/api":
@@ -722,10 +747,6 @@ func TestServiceSafeProjectionTopologyPartialAndLogs(t *testing.T) {
 	encoded, _ := json.Marshal(secret)
 	if strings.Contains(string(encoded), "c2VjcmV0LXRva2Vu") || strings.Contains(string(encoded), "last-applied") || strings.Join(secret.Summary["keys"].([]string), ",") != "token" {
 		t.Fatalf("unsafe secret projection: %s", encoded)
-	}
-	topology, err := service.Topology(context.Background(), "default", 20, 20)
-	if err != nil || len(topology.Nodes) != 3 || len(topology.Edges) != 2 {
-		t.Fatalf("topology = %#v err=%v", topology, err)
 	}
 	overview, err := service.Overview(context.Background())
 	if err != nil || len(overview.Partial) == 0 || overview.Partial[0].Class != "forbidden" {
@@ -915,130 +936,6 @@ func TestSearchAppliesEligibilityBeforeKindCap(t *testing.T) {
 	result, err := newTestService(t, server.URL, Scope{ClusterID: "test"}).Search(context.Background(), SearchOptions{Query: "needle", Namespace: "default", Category: "network"})
 	if err != nil || len(result.Items) != 1 || result.Items[0].Name != "needle-service" || result.Requests != 1 || result.Truncated || len(result.Omitted) != 0 {
 		t.Fatalf("search = %#v err=%v", result, err)
-	}
-}
-
-func TestTopologyIngestBudgetRetainsBreadthWithoutMaterializingPopulation(t *testing.T) {
-	var podLimit, returnedItems atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		switch request.URL.Path {
-		case "/api":
-			writeJSON(writer, map[string]any{"versions": []string{"v1"}})
-		case "/apis":
-			writeJSON(writer, map[string]any{"groups": []any{map[string]any{"name": "autoscaling", "preferredVersion": map[string]any{"version": "v2"}}}})
-		case "/api/v1":
-			writeJSON(writer, map[string]any{"resources": []any{
-				map[string]any{"name": "pods", "kind": "Pod", "namespaced": true, "verbs": []string{"get", "list"}},
-				map[string]any{"name": "services", "kind": "Service", "namespaced": true, "verbs": []string{"get", "list"}},
-				map[string]any{"name": "persistentvolumeclaims", "kind": "PersistentVolumeClaim", "namespaced": true, "verbs": []string{"get", "list"}},
-			}})
-		case "/apis/autoscaling/v2":
-			writeJSON(writer, map[string]any{"resources": []any{map[string]any{"name": "horizontalpodautoscalers", "kind": "HorizontalPodAutoscaler", "namespaced": true, "verbs": []string{"get", "list"}}}})
-		case "/api/v1/namespaces/default/pods":
-			limit, _ := strconv.Atoi(request.URL.Query().Get("limit"))
-			podLimit.Store(int32(limit))
-			items := make([]any, 0, limit)
-			for index := 0; index < limit; index++ {
-				items = append(items, podFixture("pod-"+strconv.Itoa(index)))
-			}
-			returnedItems.Add(int32(len(items)))
-			writeJSON(writer, map[string]any{"metadata": map[string]any{"continue": "more-of-10000"}, "items": items})
-		case "/api/v1/namespaces/default/services":
-			returnedItems.Add(1)
-			writeJSON(writer, map[string]any{"items": []any{map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"namespace": "default", "name": "api"}}}})
-		case "/api/v1/namespaces/default/persistentvolumeclaims":
-			returnedItems.Add(1)
-			writeJSON(writer, map[string]any{"items": []any{map[string]any{"apiVersion": "v1", "kind": "PersistentVolumeClaim", "metadata": map[string]any{"namespace": "default", "name": "data"}}}})
-		case "/apis/autoscaling/v2/namespaces/default/horizontalpodautoscalers":
-			returnedItems.Add(1)
-			writeJSON(writer, map[string]any{"items": []any{map[string]any{"apiVersion": "autoscaling/v2", "kind": "HorizontalPodAutoscaler", "metadata": map[string]any{"namespace": "default", "name": "api-scale"}, "spec": map[string]any{"scaleTargetRef": map[string]any{"kind": "Deployment", "name": "api"}}}}})
-		default:
-			http.NotFound(writer, request)
-		}
-	}))
-	defer server.Close()
-	topology, err := newTestService(t, server.URL, Scope{ClusterID: "test"}).Topology(context.Background(), "default", 8, 8)
-	if err != nil || len(topology.Nodes) > 8 || !topology.Truncated {
-		t.Fatalf("topology = %#v err=%v", topology, err)
-	}
-	if podLimit.Load() <= 0 || podLimit.Load() >= 10000 || returnedItems.Load() > 24 {
-		t.Fatalf("pod limit=%d returned=%d, want bounded by nodeCap+2*edgeCap", podLimit.Load(), returnedItems.Load())
-	}
-	kinds := map[string]bool{}
-	for _, node := range topology.Nodes {
-		kinds[node.Kind] = true
-	}
-	for _, kind := range []string{"Pod", "Service", "HorizontalPodAutoscaler", "PersistentVolumeClaim"} {
-		if !kinds[kind] {
-			t.Errorf("representative %s missing from %#v", kind, topology.Nodes)
-		}
-	}
-	if !containsString(topology.Omitted, "core~v1~pods") || !containsString(topology.Omitted, "category=pod") {
-		t.Fatalf("topology omissions = %v", topology.Omitted)
-	}
-}
-
-func TestTopologyNodeCapRetainsResourceBreadthAndOmissions(t *testing.T) {
-	resources := []any{
-		map[string]any{"name": "pods", "kind": "Pod", "namespaced": true, "verbs": []string{"get", "list"}},
-		map[string]any{"name": "services", "kind": "Service", "namespaced": true, "verbs": []string{"get", "list"}},
-		map[string]any{"name": "persistentvolumeclaims", "kind": "PersistentVolumeClaim", "namespaced": true, "verbs": []string{"get", "list"}},
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		switch request.URL.Path {
-		case "/api":
-			writeJSON(writer, map[string]any{"versions": []string{"v1"}})
-		case "/apis":
-			writeJSON(writer, map[string]any{"groups": []any{}})
-		case "/api/v1":
-			writeJSON(writer, map[string]any{"resources": resources})
-		case "/api/v1/namespaces/default/pods":
-			items := make([]any, 0, 20)
-			for index := 0; index < 20; index++ {
-				items = append(items, podFixture("pod-"+strconv.Itoa(index)))
-			}
-			writeJSON(writer, map[string]any{"items": items})
-		case "/api/v1/namespaces/default/services":
-			writeJSON(writer, map[string]any{"items": []any{map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"namespace": "default", "name": "api"}}}})
-		case "/api/v1/namespaces/default/persistentvolumeclaims":
-			writeJSON(writer, map[string]any{"items": []any{map[string]any{"apiVersion": "v1", "kind": "PersistentVolumeClaim", "metadata": map[string]any{"namespace": "default", "name": "data"}}}})
-		default:
-			http.NotFound(writer, request)
-		}
-	}))
-	defer server.Close()
-	topology, err := newTestService(t, server.URL, Scope{ClusterID: "test"}).Topology(context.Background(), "default", 4, 20)
-	if err != nil || !topology.Truncated || len(topology.Nodes) != 4 {
-		t.Fatalf("topology = %#v err=%v", topology, err)
-	}
-	kinds := map[string]bool{}
-	for _, node := range topology.Nodes {
-		kinds[node.Kind] = true
-	}
-	if !kinds["Pod"] || !kinds["Service"] || !kinds["PersistentVolumeClaim"] || !containsString(topology.Omitted, "core~v1~pods") {
-		t.Fatalf("breadth kinds=%v omitted=%v", kinds, topology.Omitted)
-	}
-}
-
-func TestTopologyExactNodeCapNamesOmittedResourceAndCategory(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		switch request.URL.Path {
-		case "/api":
-			writeJSON(writer, map[string]any{"versions": []string{"v1"}})
-		case "/apis":
-			writeJSON(writer, map[string]any{"groups": []any{}})
-		case "/api/v1":
-			writeJSON(writer, map[string]any{"resources": []any{map[string]any{"name": "pods", "kind": "Pod", "namespaced": true, "verbs": []string{"get", "list"}}}})
-		case "/api/v1/namespaces/default/pods":
-			writeJSON(writer, map[string]any{"items": []any{podFixture("pod-1")}})
-		default:
-			http.NotFound(writer, request)
-		}
-	}))
-	defer server.Close()
-	topology, err := newTestService(t, server.URL, Scope{ClusterID: "test"}).Topology(context.Background(), "default", 1, 20)
-	if err != nil || !topology.Truncated || len(topology.Nodes) != 1 || !containsString(topology.Omitted, "core~v1~pods") || !containsString(topology.Omitted, "category=pod") {
-		t.Fatalf("topology = %#v err=%v", topology, err)
 	}
 }
 

@@ -12,14 +12,14 @@ import (
 	"github.com/VersusControl/versus-incident/pkg/kubernetes"
 )
 
-func TestNewReturnsNineReadOnlyToolsAndAuthorizationFailsClosed(t *testing.T) {
+func TestNewReturnsEightReadOnlyToolsAndAuthorizationFailsClosed(t *testing.T) {
 	client, err := kubernetes.NewClient(kubernetes.Config{Endpoint: "http://127.0.0.1", AllowLoopbackHTTP: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	tools := New(kubernetes.NewService(client, kubernetes.Scope{ClusterID: "test"}, 0))
-	if len(tools) != 9 {
-		t.Fatalf("tools = %d, want 9", len(tools))
+	if len(tools) != 8 {
+		t.Fatalf("tools = %d, want 8", len(tools))
 	}
 	for index, tool := range tools {
 		if tool.Name() != toolNames[index] || tool.Description() == "" || tool.ArgsSchema()["type"] != "object" {
@@ -32,7 +32,7 @@ func TestNewReturnsNineReadOnlyToolsAndAuthorizationFailsClosed(t *testing.T) {
 	}
 }
 
-func TestAllNineToolsConsumeTheExactSharedScopedService(t *testing.T) {
+func TestAllEightToolsConsumeTheExactSharedScopedService(t *testing.T) {
 	client, err := kubernetes.NewClient(kubernetes.Config{Endpoint: "http://127.0.0.1", AllowLoopbackHTTP: true})
 	if err != nil {
 		t.Fatal(err)
@@ -64,7 +64,7 @@ func TestFilterAuthorizedOmitsKubernetesForBackgroundCaller(t *testing.T) {
 		t.Fatalf("background tools = %d", len(got))
 	}
 	ctx := core.WithCallerAuthorization(context.Background(), core.CallerAuthorization{Authenticated: true, Permissions: map[core.Permission]bool{core.PermissionInfrastructureView: true}})
-	if got := FilterAuthorized(ctx, tools); len(got) != 9 {
+	if got := FilterAuthorized(ctx, tools); len(got) != 8 {
 		t.Fatalf("authorized tools = %d", len(got))
 	}
 }
@@ -169,7 +169,7 @@ func TestPodLogsSchemaAllowsDefaultContainer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	logTool := New(kubernetes.NewService(client, kubernetes.Scope{ClusterID: "test"}, 0))[8]
+	logTool := New(kubernetes.NewService(client, kubernetes.Scope{ClusterID: "test"}, 0))[7]
 	required, _ := logTool.ArgsSchema()["required"].([]string)
 	if contains(required, "container") || !contains(required, "namespace") || !contains(required, "name") {
 		t.Fatalf("get_pod_logs required = %v", required)

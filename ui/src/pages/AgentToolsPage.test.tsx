@@ -1,26 +1,54 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api, type AgentToolsetAvailability } from "@/lib/api";
+import { api, type AgentConfigView, type AgentToolsetAvailability } from "@/lib/api";
 import { AgentToolsPage } from "./AgentToolsPage";
 
 vi.mock("@/components/TopBar", () => ({ TopBar: ({ title }: { title: string }) => <header>{title}</header> }));
 vi.mock("@/lib/api", async (importActual) => {
   const actual = await importActual<typeof import("@/lib/api")>();
-  return { ...actual, api: { ...actual.api, listAgentToolsets: vi.fn(), setAgentToolsetEnabled: vi.fn() } };
+  return { ...actual, api: { ...actual.api, getAgentConfig: vi.fn(), listAgentToolsets: vi.fn(), setAgentToolsetEnabled: vi.fn() } };
 });
 
 const rows: AgentToolsetAvailability[] = [
   { id: "kubernetes", section: "connector", display_name: "Kubernetes", description: "Inspect Kubernetes.", icon_key: "kubernetes", docs_url: "https://docs.versusincident.com/#/agent/tools/kubernetes", ui_path: "/agent/kubernetes", visibility: "always", state: "needs_integration", reason: "Kubernetes is not connected.", action: "/settings?tab=agent", action_label: "Connect Kubernetes", enabled: true, child_count: 9, requirement: { kind: "integration", integration: "kubernetes" } },
   { id: "source-control", section: "connector", display_name: "Source control", description: "Read recent changes.", icon_key: "git", docs_url: "https://docs.versusincident.com/#/agent/tools/recent-changes", visibility: "always", state: "needs_integration", reason: "GitHub is not connected.", action: "/settings?tab=agent", action_label: "Connect GitHub", enabled: true, child_count: 1, requirement: { kind: "integration", integration: "github" } },
-  { id: "logs", section: "datasource", display_name: "Logs", description: "Read bounded logs.", icon_key: "logs", docs_url: "https://docs.versusincident.com/#/agent/data-sources", ui_path: "/agent/logs", visibility: "always", state: "needs_datasource", reason: "No log data source is connected.", action: "/settings?tab=agent", action_label: "Add a data source", enabled: true, child_count: 1, requirement: { kind: "datasource", signal_kind: "logs" } },
+  { id: "logs", section: "datasource", display_name: "Logs", description: "Read bounded logs.", icon_key: "logs", docs_url: "https://docs.versusincident.com/#/agent/data-sources", ui_path: "/agent/logs", visibility: "always", state: "available", reason: "Log tools are available.", action: "/settings?tab=agent", action_label: "Add a data source", enabled: true, child_count: 1, requirement: { kind: "datasource", signal_kind: "logs" } },
   { id: "metrics", section: "datasource", display_name: "Metrics", description: "Summarize metrics.", icon_key: "metrics", docs_url: "https://docs.versusincident.com/#/agent/data-sources/prometheus", ui_path: "/agent/metrics", visibility: "always", state: "needs_license", reason: "Metric tools need an Enterprise source.", action: "https://versuscontrol.com/enterprise", action_label: "Learn more", enabled: true, child_count: 1, requirement: { kind: "datasource", signal_kind: "metrics" } },
-  { id: "traces", section: "datasource", display_name: "Traces", description: "Inspect traces.", icon_key: "traces", docs_url: "https://docs.versusincident.com/#/agent/data-sources/traces", ui_path: "/agent/traces", visibility: "always", state: "needs_datasource", reason: "No trace data source is connected.", action: "/settings?tab=agent", action_label: "Add a data source", enabled: true, child_count: 1, requirement: { kind: "datasource", signal_kind: "traces" } },
+  { id: "traces", section: "datasource", display_name: "Traces", description: "Inspect traces.", icon_key: "traces", docs_url: "https://docs.versusincident.com/#/agent/data-sources/traces", ui_path: "/agent/traces", visibility: "always", state: "available", reason: "Trace tools are available.", action: "/settings?tab=agent", action_label: "Add a data source", enabled: true, child_count: 1, requirement: { kind: "datasource", signal_kind: "traces" } },
   { id: "find_runbook", section: "common", display_name: "Find runbook", description: "Search runbooks.", icon_key: "runbook", docs_url: "https://docs.versusincident.com/#/agent/tools/find-runbook", ui_path: "/agent/runbooks", visibility: "always", state: "needs_capability", reason: "Runbook indexing is not configured.", action: "/admin#agent-ai-settings", action_label: "AI settings", enabled: true, child_count: 1, requirement: { kind: "capability" } },
   { id: "describe_dependencies", section: "common", display_name: "Describe dependencies", description: "Inspect dependencies.", icon_key: "dependencies", docs_url: "https://docs.versusincident.com/#/agent/tools/tools?id=describe_dependencies", visibility: "always", state: "disabled_by_operator", reason: "Not offered to the agent.", action: "", action_label: "", enabled: false, child_count: 1, requirement: { kind: "capability" } },
 ];
+
+const config = {
+  sources: [
+    { name: "Application file", type: "file", enable: true },
+    { name: "Archive file", type: "file", enable: true },
+    { name: "Disabled Elastic", type: "elasticsearch", enable: false },
+    { name: "Production Loki", type: "loki", enable: true },
+    { name: "Prometheus primary", type: "prometheus", enable: true },
+    { name: "CloudWatch production", type: "cloudwatch_metrics", enable: true },
+    { name: "Tempo production", type: "traces", enable: true },
+    { name: "Disabled SigNoz traces", type: "signoz_traces", enable: false },
+  ],
+} as AgentConfigView;
+
+const providerDocs = {
+  File: "https://docs.versusincident.com/#/agent/data-sources/file",
+  Elasticsearch: "https://docs.versusincident.com/#/agent/data-sources/elasticsearch",
+  Loki: "https://docs.versusincident.com/#/agent/data-sources/loki",
+  "CloudWatch Logs": "https://docs.versusincident.com/#/agent/data-sources/cloudwatch-logs",
+  Graylog: "https://docs.versusincident.com/#/agent/data-sources/graylog",
+  Splunk: "https://docs.versusincident.com/#/agent/data-sources/splunk",
+  "SigNoz Logs": "https://docs.versusincident.com/#/agent/data-sources/signoz",
+  Prometheus: "https://docs.versusincident.com/#/agent/data-sources/prometheus",
+  "CloudWatch Metrics": "https://docs.versusincident.com/#/agent/data-sources/cloudwatch-metrics",
+  "SigNoz Metrics": "https://docs.versusincident.com/#/enterprise/metrics/signoz",
+  "Grafana Tempo": "https://docs.versusincident.com/#/agent/data-sources/traces",
+  "SigNoz Traces": "https://docs.versusincident.com/#/agent/data-sources/traces?id=signoz-backend",
+};
 
 function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -28,6 +56,7 @@ function renderPage() {
 }
 
 beforeEach(() => {
+  vi.mocked(api.getAgentConfig).mockResolvedValue(config);
   vi.mocked(api.listAgentToolsets).mockResolvedValue(rows);
   vi.mocked(api.setAgentToolsetEnabled).mockResolvedValue({ agent: "chat", id: "describe_dependencies", enabled: true, changed: true });
 });
@@ -35,96 +64,246 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 describe("AgentToolsPage", () => {
-  it("renders exactly seven cards in canonical sections with visible accessible toggles", async () => {
+  it("renders twelve provider aliases and hides the three generic datasource owners", async () => {
     renderPage();
     expect(screen.getByLabelText("Loading tools")).toBeTruthy();
     await screen.findByText("Kubernetes");
-    const headings = screen.getAllByRole("heading", { level: 2 }).map((node) => node.textContent);
-    expect(headings).toEqual(["Connectors", "Data Source Tools", "Common"]);
-    expect(screen.getAllByRole("article")).toHaveLength(7);
-    expect(screen.getByText("9 tools")).toBeTruthy();
-    expect(screen.queryByText("get_cluster_overview")).toBeNull();
-    expect(screen.getByText("Metrics is unavailable: Metric tools need an Enterprise source.")).toBeTruthy();
-    expect(screen.getByRole("link", { name: /Learn more/ }).getAttribute("href")).toBe("https://versuscontrol.com/enterprise");
-    expect(screen.queryByRole("link", { name: "AI settings" })).toBeNull();
-    expect(screen.getByRole("link", { name: "Connect Kubernetes" }).getAttribute("href")).toBe("/settings?tab=agent");
-    expect(screen.getByLabelText("Enable Describe dependencies for chat").hasAttribute("disabled")).toBe(false);
-    for (const name of ["Enable Metrics for chat", "Enable Find runbook for chat", "Enable Kubernetes for chat"]) {
-      const checkbox = screen.getByLabelText(name) as HTMLInputElement;
-      expect(checkbox.checked).toBe(false);
-      expect(checkbox.disabled).toBe(true);
-      expect(checkbox.getAttribute("aria-disabled")).toBe("true");
+    expect(screen.getAllByRole("article")).toHaveLength(16);
+    expect(screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent)).toEqual(["Connectors", "Data Source Tools", "Common"]);
+    const datasourceSection = document.querySelector('[aria-labelledby="tools-datasource"]') as HTMLElement;
+    expect(within(datasourceSection).getAllByRole("article")).toHaveLength(12);
+    expect(within(datasourceSection).queryByRole("heading", { name: "Logs", exact: true })).toBeNull();
+    expect(within(datasourceSection).queryByRole("heading", { name: "Metrics", exact: true })).toBeNull();
+    expect(within(datasourceSection).queryByRole("heading", { name: "Traces", exact: true })).toBeNull();
+    for (const provider of Object.keys(providerDocs)) {
+      expect(within(datasourceSection).getByRole("heading", { name: provider, exact: true })).toBeTruthy();
     }
-    expect(document.querySelector(".grid-cols-1")).toBeTruthy();
+    expect(document.querySelectorAll(".md\\:grid-cols-2")).toHaveLength(3);
+    expect(document.querySelectorAll(".xl\\:grid-cols-3")).toHaveLength(3);
+    for (const card of screen.getAllByRole("article")) {
+      expect(card.className).toContain("bg-transparent");
+      expect(card.className).toContain("hover:bg-surface");
+    }
+    expect(document.querySelector(".tool-brand-kubernetes")).toBeTruthy();
+    expect(document.querySelector(".tool-brand-git")).toBeTruthy();
+    expect(screen.queryByRole("textbox", { name: "Search tools" })).toBeNull();
+    expect(screen.queryByRole("tablist")).toBeNull();
+    expect(screen.queryByText(/toolsets?$/)).toBeNull();
+    expect(screen.queryByText(/^9 tools$/)).toBeNull();
+    expect(screen.queryByText("get_cluster_overview")).toBeNull();
+    expect(screen.queryByText("Inspect Kubernetes.")).toBeNull();
+    expect(screen.queryByText("Metric tools need an Enterprise source.")).toBeNull();
+    expect(screen.getAllByText("Connection needed").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Enterprise")).toHaveLength(3);
+    expect(screen.getByText("Off")).toBeTruthy();
+    expect(screen.queryByRole("checkbox")).toBeNull();
   });
 
-  it("renders safe documentation for every card and only server-mapped internal links", async () => {
+  it("matches exact enabled source types and gates inherited UI links", async () => {
     renderPage();
     await screen.findByText("Kubernetes");
-    const cards = screen.getAllByRole("article");
-    expect(screen.getAllByRole("link", { name: "Documentation" })).toHaveLength(cards.length);
-    const documentationLinks = screen.getAllByRole("link", { name: "Documentation" });
-    for (const link of documentationLinks) {
-      expect(link.getAttribute("target")).toBe("_blank");
-      expect(link.getAttribute("rel")).toBe("noopener noreferrer");
-    }
-    expect(documentationLinks[0].getAttribute("href")).toBe("https://docs.versusincident.com/#/agent/tools/kubernetes");
-    expect(screen.getAllByRole("link", { name: "Open tool" }).map((link) => link.getAttribute("href"))).toEqual([
-      "/agent/kubernetes", "/agent/logs", "/agent/traces", "/agent/runbooks",
+    expect(screen.getAllByRole("link", { name: /^Open / }).map((link) => link.getAttribute("href"))).toEqual([
+      "/agent/kubernetes", "/agent/logs", "/agent/logs", "/agent/traces", "/agent/runbooks",
     ]);
-    expect(screen.getByText("Metrics").closest("article")?.querySelector('a[href="/agent/metrics"]')).toBeNull();
+    expect(screen.getAllByRole("button", { name: / settings$/ })).toHaveLength(16);
+    expect(screen.queryByRole("link", { name: /documentation/i })).toBeNull();
+    expect(screen.getByText("Elasticsearch").closest("article")?.textContent).toContain("Data source needed");
+    expect(screen.getByText("CloudWatch Logs").closest("article")?.querySelector('a[href="/agent/logs"]')).toBeNull();
+    expect(screen.getByText("Prometheus").closest("article")?.querySelector('a[href="/agent/metrics"]')).toBeNull();
+    expect(screen.getByText("SigNoz Traces").closest("article")?.querySelector('a[href="/agent/traces"]')).toBeNull();
   });
 
-  it("keeps permission-blocked tools documented without exposing their internal page", async () => {
+  it("keeps canonical Prometheus and Tempo cards usable for tool-only configuration", async () => {
+    vi.mocked(api.getAgentConfig).mockResolvedValueOnce({ ...config, sources: config.sources.filter((source) => !["prometheus", "cloudwatch_metrics", "signoz_metrics", "traces", "signoz_traces"].includes(source.type)) });
+    vi.mocked(api.listAgentToolsets).mockResolvedValueOnce(rows.map((row) =>
+      row.id === "metrics" || row.id === "traces" ? { ...row, state: "available", reason: `${row.display_name} tools are available.` } : row,
+    ));
+    renderPage();
+    await screen.findByText("Prometheus");
+    expect(screen.getByText("Prometheus").closest("article")?.textContent).toContain("Configured");
+    expect(screen.getByRole("link", { name: "Open Prometheus" }).getAttribute("href")).toBe("/agent/metrics");
+    expect(screen.getByRole("link", { name: "Open Grafana Tempo" }).getAttribute("href")).toBe("/agent/traces");
+    fireEvent.click(screen.getByRole("button", { name: "Prometheus settings" }));
+    const dialog = screen.getByRole("dialog", { name: "Prometheus" });
+    expect(dialog.textContent).toContain("configured outside agent sources");
+    expect((within(dialog).getByRole("checkbox") as HTMLInputElement).disabled).toBe(false);
+  });
+
+  it("does not infer Prometheus from a configured sibling metrics provider", async () => {
+    vi.mocked(api.getAgentConfig).mockResolvedValueOnce({ ...config, sources: config.sources.filter((source) => source.type !== "prometheus" && source.type !== "traces") });
+    vi.mocked(api.listAgentToolsets).mockResolvedValueOnce(rows.map((row) =>
+      row.id === "metrics" || row.id === "traces" ? { ...row, state: "available", reason: `${row.display_name} tools are available.` } : row,
+    ));
+    renderPage();
+    await screen.findByText("Prometheus");
+    expect(screen.getByText("Prometheus").closest("article")?.textContent).toContain("Data source needed");
+    expect(screen.queryByRole("link", { name: "Open Prometheus" })).toBeNull();
+  });
+
+  it("surfaces shared unhealthy state without enabling provider toggles", async () => {
+    vi.mocked(api.listAgentToolsets).mockResolvedValueOnce(rows.map((row) =>
+      row.id === "logs" ? { ...row, state: "unhealthy", reason: "Log reader is unhealthy.", health: "backend unavailable" } : row,
+    ));
+    renderPage();
+    await screen.findByText("Loki");
+    expect(screen.getByText("Loki").closest("article")?.textContent).toContain("Unhealthy");
+    fireEvent.click(screen.getByRole("button", { name: "Loki settings" }));
+    const dialog = screen.getByRole("dialog", { name: "Loki" });
+    expect(dialog.textContent).toContain("shared Logs agent capability is unhealthy");
+    expect(dialog.textContent).toContain("backend unavailable");
+    expect((within(dialog).getByRole("checkbox") as HTMLInputElement).disabled).toBe(true);
+  });
+
+  it("does not infer canonical providers from an unhealthy shared capability", async () => {
+    vi.mocked(api.getAgentConfig).mockResolvedValueOnce({ ...config, sources: config.sources.filter((source) => source.type !== "prometheus") });
+    vi.mocked(api.listAgentToolsets).mockResolvedValueOnce(rows.map((row) =>
+      row.id === "metrics" ? { ...row, state: "unhealthy", reason: "Metric reader configuration is invalid.", health: "configuration" } : row,
+    ));
+    renderPage();
+    await screen.findByText("Prometheus");
+    expect(screen.getByText("Prometheus").closest("article")?.textContent).toContain("Data source needed");
+    expect(screen.queryByRole("link", { name: "Open Prometheus" })).toBeNull();
+  });
+
+  it("names and explains shared policy controls", async () => {
+    renderPage();
+    await screen.findByText("File");
+    fireEvent.click(screen.getByRole("button", { name: "File settings" }));
+    const dialog = screen.getByRole("dialog", { name: "File" });
+    expect(within(dialog).getByRole("checkbox", { name: "Enable Logs for chat" })).toBeTruthy();
+    expect(dialog.textContent).toContain("This setting affects every configured logs provider.");
+  });
+
+  it("keeps permission-blocked tools visible without exposing their internal page", async () => {
     vi.mocked(api.listAgentToolsets).mockResolvedValueOnce(rows.map((row) =>
       row.id === "kubernetes"
         ? { ...row, state: "needs_permission", reason: "Kubernetes access is not permitted." }
         : row,
     ));
     renderPage();
-    const card = (await screen.findByText("Kubernetes")).closest("article");
-    expect(card?.textContent).toContain("Kubernetes access is not permitted.");
-    expect(card?.querySelector('a[href="/agent/kubernetes"]')).toBeNull();
-    expect(card?.querySelector('a[href="https://docs.versusincident.com/#/agent/tools/kubernetes"]')).toBeTruthy();
+    const row = (await screen.findByText("Kubernetes")).closest("article");
+    expect(row?.querySelector('a[href="/agent/kubernetes"]')).toBeNull();
+    expect(within(row as HTMLElement).getByRole("button", { name: "Kubernetes settings" })).toBeTruthy();
   });
 
-  it("hides internal setup actions from Common cards", async () => {
-    vi.mocked(api.listAgentToolsets).mockResolvedValueOnce(rows.map((row) =>
-      row.id === "find_runbook"
-        ? { ...row, action: "/settings?tab=agent", action_label: "Configure capability" }
-        : row,
-    ));
-    renderPage();
-    await screen.findByText("Find runbook");
-    expect(screen.queryByRole("link", { name: "Configure capability" })).toBeNull();
-    expect(screen.getByRole("link", { name: /Learn more/ })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Connect Kubernetes" })).toBeTruthy();
-  });
-
-  it("does not mutate unavailable tools and can re-enable an operator-disabled Versus tool", async () => {
+  it("moves availability, docs, setup, and enablement into settings", async () => {
     renderPage();
     await screen.findByText("Kubernetes");
-    fireEvent.click(screen.getByLabelText("Enable Metrics for chat"));
+    fireEvent.click(screen.getByRole("button", { name: "Kubernetes settings" }));
+    const dialog = screen.getByRole("dialog", { name: "Kubernetes" });
+    expect(dialog.textContent).toContain("Connection needed");
+    expect(dialog.textContent).toContain("Kubernetes is not connected.");
+    expect(dialog.textContent).toContain("Chat agent");
+    expect(within(dialog).getByRole("link", { name: /Documentation/ }).getAttribute("href")).toBe("https://docs.versusincident.com/#/agent/tools/kubernetes");
+    expect(within(dialog).getByRole("link", { name: "Connect Kubernetes" }).getAttribute("href")).toBe("/settings?tab=agent");
+    fireEvent.click(screen.getByRole("button", { name: "Close dialog" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("keeps Enterprise authoritative and allows its external Learn more action", async () => {
+    renderPage();
+    await screen.findByText("Prometheus");
+    fireEvent.click(screen.getByRole("button", { name: "Prometheus settings" }));
+    const dialog = screen.getByRole("dialog", { name: "Prometheus" });
+    const checkbox = within(dialog).getByRole("checkbox") as HTMLInputElement;
+    expect(checkbox.disabled).toBe(true);
+    fireEvent.click(checkbox);
     expect(api.setAgentToolsetEnabled).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByLabelText("Enable Describe dependencies for chat"));
+    const documentation = within(dialog).getByRole("link", { name: "Documentation" });
+    expect(documentation.getAttribute("target")).toBe("_blank");
+    expect(documentation.getAttribute("rel")).toBe("noopener noreferrer");
+    expect(within(dialog).getByRole("link", { name: /Learn more/ }).getAttribute("href")).toBe("https://versuscontrol.com/enterprise");
+  });
+
+  it("shows provider details, configured names, shared capability, and exact docs without internal setup links", async () => {
+    renderPage();
+    await screen.findByText("File");
+    fireEvent.click(screen.getByRole("button", { name: "Source control settings" }));
+    let dialog = screen.getByRole("dialog", { name: "Source control" });
+    expect(within(dialog).queryByRole("link", { name: "Connect GitHub" })).toBeNull();
+    expect(within(dialog).getByRole("link", { name: "Documentation" })).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close dialog" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "File settings" }));
+    dialog = screen.getByRole("dialog", { name: "File" });
+    expect(within(dialog).queryByRole("link", { name: "Add a data source" })).toBeNull();
+    expect(dialog.textContent).toContain("Read logs from local files.");
+    expect(dialog.textContent).toContain("Uses the shared Logs agent capability.");
+    expect(dialog.textContent).toContain("Application file, Archive file");
+    expect(within(dialog).getByRole("link", { name: "Documentation" }).getAttribute("href")).toBe(providerDocs.File);
+  });
+
+  it("uses provider documentation URLs for every datasource settings dialog", async () => {
+    renderPage();
+    await screen.findByText("File");
+    for (const [provider, docsURL] of Object.entries(providerDocs)) {
+      fireEvent.click(screen.getByRole("button", { name: `${provider} settings` }));
+      const dialog = screen.getByRole("dialog", { name: provider });
+      expect(within(dialog).getByRole("link", { name: "Documentation" }).getAttribute("href")).toBe(docsURL);
+      expect(within(dialog).queryByRole("link", { name: "Add a data source" })).toBeNull();
+      fireEvent.click(within(dialog).getByRole("button", { name: "Close dialog" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    }
+  });
+
+  it("toggles configured providers through the shared base policy ID", async () => {
+    renderPage();
+    await screen.findByText("File");
+    fireEvent.click(screen.getByRole("button", { name: "File settings" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "File" })).getByRole("checkbox"));
+    await waitFor(() => expect(api.setAgentToolsetEnabled).toHaveBeenCalledWith("chat", "logs", false));
+  });
+
+  it("disables policy toggles for unconfigured providers even when the shared base is available", async () => {
+    renderPage();
+    await screen.findByText("Elasticsearch");
+    fireEvent.click(screen.getByRole("button", { name: "Elasticsearch settings" }));
+    const dialog = screen.getByRole("dialog", { name: "Elasticsearch" });
+    expect((within(dialog).getByRole("checkbox") as HTMLInputElement).disabled).toBe(true);
+    expect(dialog.textContent).toContain("Elasticsearch is not configured.");
+  });
+
+  it("uses neutral shared status when source configuration cannot be queried", async () => {
+    vi.mocked(api.getAgentConfig).mockRejectedValueOnce(new Error("config unavailable"));
+    renderPage();
+    await screen.findByText("File");
+    expect(screen.getAllByText("Shared status unknown")).toHaveLength(9);
+    expect(screen.getAllByText("Enterprise")).toHaveLength(3);
+    expect(screen.getByText("File").closest("article")?.querySelector('a[href="/agent/logs"]')).toBeNull();
+    expect(screen.getByText("Grafana Tempo").closest("article")?.querySelector('a[href="/agent/traces"]')).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "File settings" }));
+    const dialog = screen.getByRole("dialog", { name: "File" });
+    expect(dialog.textContent).toContain("Provider configuration is unavailable.");
+    expect((within(dialog).getByRole("checkbox") as HTMLInputElement).disabled).toBe(true);
+  });
+
+  it("can re-enable an operator-disabled tool from settings", async () => {
+    renderPage();
+    await screen.findByText("Kubernetes");
+    fireEvent.click(screen.getByRole("button", { name: "Describe dependencies settings" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Describe dependencies" })).getByRole("checkbox"));
     await waitFor(() => expect(api.setAgentToolsetEnabled).toHaveBeenCalledWith("chat", "describe_dependencies", true));
   });
 
   it("toggles independently per selected agent and refetches authoritative state", async () => {
     renderPage();
     await screen.findByText("Kubernetes");
-    fireEvent.click(screen.getByLabelText("Enable Describe dependencies for chat"));
+    fireEvent.click(screen.getByRole("button", { name: "Describe dependencies settings" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Describe dependencies" })).getByRole("checkbox"));
     await waitFor(() => expect(api.setAgentToolsetEnabled).toHaveBeenCalledWith("chat", "describe_dependencies", true));
+    fireEvent.click(screen.getByRole("button", { name: "Close dialog" }));
     fireEvent.click(screen.getByRole("button", { name: "analyze" }));
     await waitFor(() => expect(api.listAgentToolsets).toHaveBeenCalledWith("analyze"));
-    expect(await screen.findByLabelText("Enable Describe dependencies for analyze")).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "Describe dependencies settings" }));
+    expect(within(screen.getByRole("dialog", { name: "Describe dependencies" })).getByText("Analyze agent")).toBeTruthy();
   });
 
   it("keeps a rejected mutation actionable and dismissible", async () => {
     vi.mocked(api.setAgentToolsetEnabled).mockRejectedValueOnce(new Error("Requirement is not satisfied"));
     renderPage();
     await screen.findByText("Kubernetes");
-    fireEvent.click(screen.getByLabelText("Enable Describe dependencies for chat"));
+    fireEvent.click(screen.getByRole("button", { name: "Describe dependencies settings" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Describe dependencies" })).getByRole("checkbox"));
     expect((await screen.findByRole("alert")).textContent).toContain("Requirement is not satisfied");
     fireEvent.click(screen.getByRole("button", { name: /Dismiss/ }));
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());

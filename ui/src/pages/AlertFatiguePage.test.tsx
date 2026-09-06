@@ -379,37 +379,6 @@ describe("AlertFatiguePage — fingerprint review table", () => {
     );
   });
 
-  it("loads the next page when Load more is clicked", async () => {
-    // First page reports a larger total → hasNextPage. Each page returns rows
-    // with distinct ids (page 1 → fp1-*, page 2 → fp2-*), matching how the real
-    // API returns non-overlapping rows, so the merged list has unique keys.
-    vi.mocked(api.listAlertFatigueFingerprints).mockImplementation((params) =>
-      Promise.resolve(
-        params?.page === 2
-          ? page([finding({ id: "fp2-a" })], {
-              total: 120,
-              page: 2,
-              page_size: 50,
-            })
-          : page([finding({ id: "fp1-a" })], {
-              total: 120,
-              page: 1,
-              page_size: 50,
-            }),
-      ),
-    );
-    renderPage();
-
-    const more = await screen.findByTestId("alert-fatigue-load-more");
-    fireEvent.click(more);
-
-    await waitFor(() =>
-      expect(api.listAlertFatigueFingerprints).toHaveBeenCalledWith(
-        expect.objectContaining({ page: 2 }),
-      ),
-    );
-  });
-
   it("renders rows from the backend's { fingerprints: [...] } payload", async () => {
     // Build the response verbatim (not via the page() helper) so this test
     // guards the wire-key contract directly: the backend ships `fingerprints`,

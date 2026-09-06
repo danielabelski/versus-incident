@@ -54,7 +54,8 @@ export function AppShell() {
             id="main"
             ref={mainRef}
             tabIndex={-1}
-            className="flex min-w-0 flex-1 flex-col overflow-hidden outline-none"
+            style={{ outline: "none" }}
+            className="flex min-w-0 flex-1 flex-col overflow-hidden outline-none focus-visible:outline-none"
           >
             {/* Keyed by pathname: a page crash keeps the shell navigable and
                 navigating away remounts a clean boundary — and drops the cached

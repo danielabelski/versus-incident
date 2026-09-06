@@ -18,7 +18,7 @@
   Free with MIT license · <a href="https://versusincident.com/pricing" target="_blank">Enterprise Pricing</a>
 </p>
 
-![Versus](src/docs/images/versus-dashboard-01.png)
+![Versus](src/docs/images/versus-dashboard.svg)
 
 ## How Versus Creates Incidents
 
