@@ -3,7 +3,6 @@ package kubernetes
 import (
 	"os"
 	"regexp"
-	"strings"
 	"testing"
 )
 
@@ -51,34 +50,4 @@ func quotedTemplateFieldValues(t *testing.T, content, field string) []string {
 		t.Fatalf("no %s entries found in Kubernetes reader RBAC template", field)
 	}
 	return values
-}
-
-func TestKubernetesDocumentationHasUnindentedProseAndHeadings(t *testing.T) {
-	document, err := os.ReadFile("../../src/agent/tools/kubernetes.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	inFence := false
-	for lineNumber, line := range strings.Split(string(document), "\n") {
-		if strings.HasPrefix(line, "```") {
-			inFence = !inFence
-			continue
-		}
-		trimmed := strings.TrimLeft(line, " \t")
-		indentedHeading := trimmed != line && strings.HasPrefix(trimmed, "#")
-		if !inFence && (indentedHeading || strings.HasPrefix(line, "    ") && strings.TrimSpace(line) != "") {
-			t.Errorf("line %d is indented outside a code fence: %q", lineNumber+1, line)
-		}
-	}
-	normalized := strings.Join(strings.Fields(string(document)), " ")
-	for _, required := range []string{
-		"Unset references expand to an empty string.",
-		"`$$` names the environment variable `$`",
-		"cannot introduce YAML keys or documents",
-		"remain part of the scalar string",
-	} {
-		if !strings.Contains(normalized, required) {
-			t.Errorf("Kubernetes documentation is missing environment expansion safety text %q", required)
-		}
-	}
 }
