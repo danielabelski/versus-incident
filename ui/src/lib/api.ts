@@ -1941,14 +1941,39 @@ export interface KubernetesResource {
   projection_truncated?: string[] | null;
 }
 
-export interface KubernetesTopology {
-  nodes: { id: string; kind: string; namespace?: string; name: string; status?: string }[] | null;
-  edges: { from: string; to: string; type: string; intent?: boolean }[] | null;
-  node_cap: number;
-  edge_cap: number;
+export interface KubernetesResourcePage {
+  items: KubernetesResource[] | null;
+  continue?: string;
   truncated: boolean;
   omitted_categories?: string[] | null;
-  partial_failures?: { resource_id?: string; class: string }[] | null;
+  partial_failures?: Array<{ resource_id?: string; class: string }> | null;
+}
+
+async function listKubernetesResources(resourceId: string, fields = ""): Promise<KubernetesResourcePage> {
+  const items: KubernetesResource[] = [];
+  const omitted = new Set<string>();
+  const partial: NonNullable<KubernetesResourcePage["partial_failures"]> = [];
+  let continuation = "";
+  let truncated = false;
+  do {
+    const query = new URLSearchParams({ resource_id: resourceId, limit: "100" });
+    if (fields) query.set("fields", fields);
+    if (continuation) query.set("continue", continuation);
+    const page = await request<KubernetesResourcePage>(`/api/admin/kubernetes/resources?${query}`);
+    items.push(...(page.items ?? []).slice(0, 500 - items.length));
+    for (const value of page.omitted_categories ?? []) omitted.add(value);
+    partial.push(...(page.partial_failures ?? []));
+    continuation = page.continue ?? "";
+    truncated = truncated || Boolean(page.truncated && !continuation);
+  } while (continuation && items.length < 500);
+  if (continuation) truncated = true;
+  return {
+    items,
+    truncated,
+    ...(continuation ? { continue: continuation } : {}),
+    ...(omitted.size ? { omitted_categories: [...omitted] } : {}),
+    ...(partial.length ? { partial_failures: partial } : {}),
+  };
 }
 
 export interface KubernetesMetricsSourceStatus {
@@ -1992,6 +2017,7 @@ export interface KubernetesWorkload {
   conditions?: Array<{ type: string; status: string; reason?: string }>;
   containers?: Array<{ name: string; image?: string; probes?: string[]; requests?: Record<string, string>; limits?: Record<string, string> }>;
   pods?: Array<{ name: string; phase?: string; node?: string; restart_count: number }>;
+  usage?: Array<{ kind: "Pod"; namespace?: string; name: string; timestamp?: string; window?: string; cpu?: string; memory?: string }>;
   nodes?: string[];
   affinity?: string[];
   topology_spread?: string[];
@@ -2016,19 +2042,20 @@ export const api = {
       { method: "PUT", body: JSON.stringify({ enabled }) },
     ),
   kubernetesOverview: () => request<KubernetesOverview>("/api/admin/kubernetes/overview"),
-  kubernetesTopology: (namespace = "") => request<KubernetesTopology>(`/api/admin/kubernetes/topology?namespace=${encodeURIComponent(namespace)}`),
+  kubernetesNodes: () => listKubernetesResources("core~v1~nodes"),
+  kubernetesNodePods: (node: string) => listKubernetesResources("core~v1~pods", "spec.nodeName=" + node),
   kubernetesUsage: (namespace = "") => request<KubernetesUsage>(`/api/admin/kubernetes/usage?namespace=${encodeURIComponent(namespace)}`),
   kubernetesWorkloads: (namespace = "") =>
-    request<{ items: KubernetesResource[] | null; truncated: boolean; omitted_categories?: string[] | null; partial_failures?: Array<{ resource_id?: string; class: string }> | null }>(`/api/admin/kubernetes/workloads?namespace=${encodeURIComponent(namespace)}&limit=100`),
+    request<{ items: KubernetesResource[] | null; truncated: boolean; omitted_categories?: string[] | null; partial_failures?: Array<{ resource_id?: string; class: string }> | null }>(`/api/admin/kubernetes/workloads?namespace=${encodeURIComponent(namespace)}&limit=500`),
   kubernetesWorkload: (kind: string, namespace: string, name: string) =>
     request<KubernetesWorkload>(`/api/admin/kubernetes/workloads/${encodeURIComponent(kind)}/${encodeURIComponent(name)}?namespace=${encodeURIComponent(namespace)}`),
   kubernetesSearch: (namespace: string, query: string) =>
     request<{ items: KubernetesResource[] | null; truncated: boolean; omitted_categories?: string[] | null; partial_failures?: Array<{ resource_id?: string; class: string }> | null }>(
-      `/api/admin/kubernetes/resources/search?namespace=${encodeURIComponent(namespace)}&q=${encodeURIComponent(query)}`,
+      `/api/admin/kubernetes/resources/search?namespace=${encodeURIComponent(namespace)}&q=${encodeURIComponent(query)}&per_kind_limit=100&limit=500`,
     ),
   kubernetesEvents: (namespace = "") =>
     request<{ items: KubernetesResource[] | null; truncated: boolean; partial_failures?: Array<{ resource_id?: string; class: string }> | null }>(
-      `/api/admin/kubernetes/events?namespace=${encodeURIComponent(namespace)}&type=Warning&limit=20`,
+      `/api/admin/kubernetes/events?namespace=${encodeURIComponent(namespace)}&type=Warning&limit=500`,
     ),
   kubernetesDescribe: (resourceId: string, namespace: string, name: string) =>
     request<{ resource: KubernetesResource; related_resources?: Array<{ kind: string; namespace?: string; name: string }>; events?: KubernetesResource[]; partial_failures?: Array<{ resource_id?: string; class: string }> }>(

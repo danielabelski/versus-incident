@@ -427,9 +427,32 @@ function MembersTable({
       </p>
     );
   }
+
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-left text-xs">
+    <MembersCollection
+      members={members}
+      selfSubject={selfSubject}
+      pendingSubject={pendingSubject}
+      onChangeRole={onChangeRole}
+    />
+  );
+}
+
+function MembersCollection({
+  members,
+  selfSubject,
+  pendingSubject,
+  onChangeRole,
+}: {
+  members: MemberView[];
+  selfSubject: string;
+  pendingSubject: string | null;
+  onChangeRole: (subject: string, role: MemberRole) => void;
+}) {
+  return (
+    <div className="overflow-hidden rounded-control border border-ink-700">
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-xs">
         <thead>
           <tr className="border-b border-ink-700 text-2xs uppercase tracking-wider text-ink-400">
             <th className="py-2 pr-3 font-medium">Email</th>
@@ -488,7 +511,8 @@ function MembersTable({
             );
           })}
         </tbody>
-      </table>
+        </table>
+      </div>
     </div>
   );
 }

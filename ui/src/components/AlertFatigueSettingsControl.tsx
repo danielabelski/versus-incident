@@ -111,7 +111,7 @@ export function AlertFatigueSettingsControl() {
 
   return (
     <Shell>
-      <SettingsBody />
+      <SettingsBody key={access.org ?? ""} />
     </Shell>
   );
 }
@@ -884,13 +884,15 @@ function CorrelationGroupsList() {
       className="overflow-hidden rounded-md border border-ink-700"
       data-testid="alert-fatigue-correlation-groups"
     >
-      <div className="border-b border-ink-700 px-3 py-2 text-2xs font-semibold uppercase tracking-wide text-ink-400">
-        Correlation groups
-        {total !== undefined && (
-          <span className="ml-2 font-normal normal-case text-ink-500">
-            {total.toLocaleString()} total
-          </span>
-        )}
+      <div className="border-b border-ink-700 px-3 py-2">
+        <div className="text-2xs font-semibold uppercase tracking-wide text-ink-400">
+          Correlation groups
+          {total !== undefined && (
+            <span className="ml-2 font-normal normal-case text-ink-500">
+              {total.toLocaleString()} total
+            </span>
+          )}
+        </div>
       </div>
       {q.isError ? (
         <div className="flex items-center justify-between gap-3 p-3 text-xs">
@@ -931,11 +933,10 @@ function CorrelationGroupsList() {
             </tbody>
           </table>
           {q.hasNextPage && (
-            <div className="border-t border-ink-700 px-3 py-2 text-center">
+            <div className="border-t border-ink-700 p-2 text-center">
               <button
                 type="button"
-                className="btn"
-                data-testid="alert-fatigue-correlation-groups-more"
+                className="btn text-xs"
                 disabled={q.isFetchingNextPage}
                 onClick={() => q.fetchNextPage()}
               >
@@ -1234,13 +1235,15 @@ function DependencyEdgeEditor() {
       className="overflow-hidden rounded-md border border-ink-700"
       data-testid="alert-fatigue-dependency-edges"
     >
-      <div className="border-b border-ink-700 px-3 py-2 text-2xs font-semibold uppercase tracking-wide text-ink-400">
-        Dependency map
-        {total !== undefined && (
-          <span className="ml-2 font-normal normal-case text-ink-500">
-            {total.toLocaleString()} edge{total === 1 ? "" : "s"}
-          </span>
-        )}
+      <div className="border-b border-ink-700 px-3 py-2">
+        <div className="text-2xs font-semibold uppercase tracking-wide text-ink-400">
+          Dependency map
+          {total !== undefined && (
+            <span className="ml-2 font-normal normal-case text-ink-500">
+              {total.toLocaleString()} edge{total === 1 ? "" : "s"}
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="flex flex-wrap items-end gap-2 border-b border-ink-700 px-3 py-3">
@@ -1351,11 +1354,10 @@ function DependencyEdgeEditor() {
             </tbody>
           </table>
           {q.hasNextPage && (
-            <div className="border-t border-ink-700 px-3 py-2 text-center">
+            <div className="border-t border-ink-700 p-2 text-center">
               <button
                 type="button"
-                className="btn"
-                data-testid="alert-fatigue-edges-more"
+                className="btn text-xs"
                 disabled={q.isFetchingNextPage}
                 onClick={() => q.fetchNextPage()}
               >

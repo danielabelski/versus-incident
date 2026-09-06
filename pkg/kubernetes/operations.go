@@ -16,6 +16,7 @@ const (
 	maxSearchRequests    = 128
 	maxSearchKindPages   = 16
 	maxCollectedItems    = 10000
+	listAllPageSize      = 100
 )
 
 // SearchOptions bounds a true cross-kind name search.
@@ -133,13 +134,7 @@ var workloadResources = []struct {
 	{"Pod", "core~v1~pods"},
 }
 
-var topologyResourceIDs = []string{
-	"core~v1~namespaces", "core~v1~nodes", "core~v1~pods", "apps~v1~deployments", "apps~v1~statefulsets", "apps~v1~daemonsets", "apps~v1~replicasets", "batch~v1~jobs", "batch~v1~cronjobs",
-	"core~v1~services", "discovery.k8s.io~v1~endpointslices", "networking.k8s.io~v1~ingresses", "gateway.networking.k8s.io~v1~gateways", "gateway.networking.k8s.io~v1~httproutes",
-	"autoscaling~v2~horizontalpodautoscalers", "policy~v1~poddisruptionbudgets", "core~v1~configmaps", "core~v1~secrets", "core~v1~persistentvolumeclaims", "core~v1~persistentvolumes", "storage.k8s.io~v1~storageclasses",
-}
-
-func projectTopologyReferences(kind string, metadata, spec, summary map[string]any) {
+func projectResourceReferences(kind string, metadata, spec, summary map[string]any) {
 	addNames := func(key string, values ...string) {
 		seen := map[string]bool{}
 		var names []string
@@ -275,91 +270,6 @@ func routeGateways(spec map[string]any) []string {
 	return result
 }
 
-func deriveTopologyEdges(resources map[string]ProjectedResource, add func(TopologyEdge)) {
-	replicaSetOwners := map[string]ObjectRef{}
-	servicesWithEndpoints := map[string]bool{}
-	for id, resource := range resources {
-		if resource.Kind == "ReplicaSet" && len(resource.Owners) > 0 {
-			replicaSetOwners[id] = resource.Owners[0]
-		}
-		if resource.Kind == "EndpointSlice" {
-			for _, name := range stringSlice(resource.Summary["services"]) {
-				servicesWithEndpoints[objectID("Service", resource.Namespace, name)] = true
-			}
-		}
-	}
-	for id, resource := range resources {
-		if resource.Namespace != "" {
-			add(TopologyEdge{From: objectID("Namespace", "", resource.Namespace), To: id, Type: "contains"})
-		}
-		if node, _ := resource.Summary["node"].(string); node != "" {
-			add(TopologyEdge{From: objectID("Node", "", node), To: id, Type: "scheduled_on"})
-		}
-		for _, owner := range resource.Owners {
-			ownerID := objectID(owner.Kind, resource.Namespace, owner.Name)
-			if owner.Kind == "ReplicaSet" {
-				if collapsed, ok := replicaSetOwners[ownerID]; ok && collapsed.Kind == "Deployment" {
-					ownerID = objectID(collapsed.Kind, resource.Namespace, collapsed.Name)
-				}
-			}
-			add(TopologyEdge{From: ownerID, To: id, Type: "owns"})
-		}
-		for _, pair := range []struct{ key, kind, edge string }{{"config_maps", "ConfigMap", "references"}, {"secrets", "Secret", "references"}, {"persistent_volume_claims", "PersistentVolumeClaim", "mounts"}, {"persistent_volumes", "PersistentVolume", "binds"}, {"storage_classes", "StorageClass", "provisions"}} {
-			for _, name := range stringSlice(resource.Summary[pair.key]) {
-				targetNamespace := resource.Namespace
-				if pair.kind == "PersistentVolume" || pair.kind == "StorageClass" {
-					targetNamespace = ""
-				}
-				add(TopologyEdge{From: id, To: objectID(pair.kind, targetNamespace, name), Type: pair.edge})
-			}
-		}
-		if resource.Kind == "EndpointSlice" {
-			for _, name := range stringSlice(resource.Summary["services"]) {
-				add(TopologyEdge{From: objectID("Service", resource.Namespace, name), To: id, Type: "routes_to"})
-			}
-			for _, name := range stringSlice(resource.Summary["pods"]) {
-				add(TopologyEdge{From: id, To: objectID("Pod", resource.Namespace, name), Type: "routes_to"})
-			}
-		}
-		if resource.Kind == "Ingress" || resource.Kind == "Gateway" || resource.Kind == "HTTPRoute" {
-			for _, name := range stringSlice(resource.Summary["services"]) {
-				add(TopologyEdge{From: id, To: objectID("Service", resource.Namespace, name), Type: "routes_to"})
-			}
-		}
-		if resource.Kind == "HTTPRoute" {
-			for _, name := range stringSlice(resource.Summary["gateways"]) {
-				add(TopologyEdge{From: objectID("Gateway", resource.Namespace, name), To: id, Type: "attaches"})
-			}
-		}
-		if resource.Kind == "HorizontalPodAutoscaler" {
-			if target, ok := resource.Summary["target"].(ObjectRef); ok {
-				add(TopologyEdge{From: id, To: objectID(target.Kind, resource.Namespace, target.Name), Type: "scales"})
-			}
-		}
-		if resource.Kind == "Service" || resource.Kind == "PodDisruptionBudget" {
-			if selector, ok := resource.Summary["selector"].(map[string]string); ok {
-				if resource.Kind == "Service" && servicesWithEndpoints[id] {
-					continue
-				}
-				for podID, pod := range resources {
-					if pod.Kind == "Pod" && pod.Namespace == resource.Namespace && labelsMatch(pod.Labels, selector) {
-						edge := "routes_to"
-						intent := false
-						if resource.Kind == "PodDisruptionBudget" {
-							edge = "protects"
-						} else {
-							edge = "selects"
-							intent = true
-						}
-						add(TopologyEdge{From: id, To: podID, Type: edge, Intent: intent})
-					}
-				}
-			}
-		}
-	}
-}
-
-func stringSlice(value any) []string { values, _ := value.([]string); return values }
 func labelsMatch(labels, selector map[string]string) bool {
 	if len(selector) == 0 {
 		return false
@@ -379,7 +289,7 @@ func (service *Service) listAll(ctx context.Context, options ListOptions) (Resou
 	if err != nil {
 		return result, err
 	}
-	options.Limit = maxPageSize
+	options.Limit = listAllPageSize
 	for len(result.Items) < maxCollectedItems {
 		page, err := service.List(ctx, options)
 		if err != nil {

@@ -7,10 +7,11 @@ import (
 )
 
 const (
-	defaultOperationTimeout  = 20 * time.Second
-	defaultOperationRequests = 64
-	defaultOperationBytes    = int64(32 << 20)
-	defaultOperationItems    = 10000
+	defaultOperationTimeout   = 20 * time.Second
+	defaultOperationRequests  = 64
+	overviewOperationRequests = 256
+	defaultOperationBytes     = int64(32 << 20)
+	defaultOperationItems     = 10000
 )
 
 type operationBudgetKey struct{}
@@ -24,10 +25,14 @@ type operationBudget struct {
 }
 
 func ensureOperationBudget(ctx context.Context) (context.Context, context.CancelFunc) {
+	return ensureOperationBudgetRequests(ctx, defaultOperationRequests)
+}
+
+func ensureOperationBudgetRequests(ctx context.Context, requests int) (context.Context, context.CancelFunc) {
 	if operationBudgetFrom(ctx) != nil {
 		return ctx, func() {}
 	}
-	return withOperationBudget(ctx, defaultOperationTimeout, defaultOperationRequests, defaultOperationBytes, defaultOperationItems)
+	return withOperationBudget(ctx, defaultOperationTimeout, requests, defaultOperationBytes, defaultOperationItems)
 }
 
 func withOperationBudget(ctx context.Context, timeout time.Duration, requests int, bytes int64, items int) (context.Context, context.CancelFunc) {

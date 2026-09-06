@@ -1,24 +1,26 @@
 # Kubernetes Connector
 
 The Kubernetes connector gives Versus read-only tools: cluster
-overview, API discovery, resource search/list/get, workload list/get, topology,
-events, and pod logs. It never applies, patches, deletes, executes in a pod,
+overview, API discovery, resource search/list/get, workload list/get, events,
+and pod logs. It never applies, patches, deletes, executes in a pod,
 opens a terminal or proxy, performs a rollout, or runs Helm.
 
 ## Native authentication
 
 Environment references in `tools.yaml` are expanded only after strict YAML
-parsing and only inside decoded string values. Both `$VAR` and `${VAR}` use Go's
-`os.ExpandEnv` behavior; unset variables and `$$` expand to an empty string.
-Expanded quotes, colons, hashes, backslashes, and newlines remain part of one
-scalar and cannot introduce YAML keys or documents.
+parsing and only inside decoded string values. Both `$VAR` and `${VAR}`.
 
 An empty mode preserves legacy `endpoint` plus top-level `token_file` only when
 the nested `auth` object is otherwise empty. Any configured `auth.*` field
 requires an explicit `auth.mode`. Kubeconfig supplies endpoint, CA, TLS
-name, and credentials. Every other mode uses top-level `endpoint`, `ca_file` or
-`ca_data`, and optional `server_name`. Except for `in_cluster`, Versus does not
+name, and credentials. Every other mode uses top-level `endpoint`, `ca_data` or
+`ca_file`, and optional `server_name`. Except for `in_cluster`, Versus does not
 discover the Kubernetes endpoint or CA: obtain and mount them separately.
+
+The examples below use `ca_data: ${KUBERNETES_CA_DATA}`. Set that environment
+variable to the cluster's base64-encoded CA certificate. If you mount a PEM CA
+file instead, replace `ca_data` with `ca_file: /run/kubernetes/ca.crt`. Configure
+only one of `ca_data` or `ca_file`.
 
 ### In-cluster ServiceAccount
 
@@ -38,7 +40,7 @@ not require a restart. The projected cluster CA is used automatically.
 tools:
   kubernetes:
     endpoint: https://api.example
-    ca_file: /run/kubernetes/ca.crt
+    ca_data: ${KUBERNETES_CA_DATA}
     auth:
       mode: token_file
       token_file: /run/secrets/kubernetes-token
@@ -52,7 +54,7 @@ The bounded token file is read on every request.
 tools:
   kubernetes:
     endpoint: https://api.example
-    ca_file: /run/kubernetes/ca.crt
+    ca_data: ${KUBERNETES_CA_DATA}
     auth:
       mode: token
       token: ${KUBERNETES_TOKEN}
@@ -66,7 +68,7 @@ Keep static tokens in an environment-backed Secret.
 tools:
   kubernetes:
     endpoint: https://api.example
-    ca_file: /run/kubernetes/ca.crt
+    ca_data: ${KUBERNETES_CA_DATA}
     auth:
       mode: client_certificate
       client_certificate:
@@ -100,7 +102,7 @@ instructions to use native `eks`, `aks`, or `gke` mode.
 tools:
   kubernetes:
     endpoint: https://API_ID.eks.us-east-1.amazonaws.com
-    ca_file: /run/kubernetes/eks-ca.crt
+    ca_data: ${KUBERNETES_CA_DATA}
     auth:
       mode: eks
       eks:
@@ -123,7 +125,7 @@ Kubernetes ClusterRole, and Helm values together, see
 tools:
   kubernetes:
     endpoint: https://cluster.example.azmk8s.io
-    ca_file: /run/kubernetes/aks-ca.crt
+    ca_data: ${KUBERNETES_CA_DATA}
     auth:
       mode: aks
       aks:
@@ -146,7 +148,7 @@ refresh so projected-file rotation is observed. Projected read-only mode
 tools:
   kubernetes:
     endpoint: https://cluster.example.azmk8s.io
-    ca_file: /run/kubernetes/aks-ca.crt
+    ca_data: ${KUBERNETES_CA_DATA}
     auth:
       mode: aks
       aks:
@@ -164,7 +166,7 @@ tools:
 tools:
   kubernetes:
     endpoint: https://cluster.example.azmk8s.io
-    ca_file: /run/kubernetes/aks-ca.crt
+    ca_data: ${KUBERNETES_CA_DATA}
     auth:
       mode: aks
       aks:
@@ -185,7 +187,7 @@ server audience. Grant the identity cluster access and Kubernetes RBAC.
 tools:
   kubernetes:
     endpoint: https://api.gke.example
-    ca_file: /run/kubernetes/gke-ca.crt
+    ca_data: ${KUBERNETES_CA_DATA}
     auth:
       mode: gke
       gke:
@@ -277,7 +279,7 @@ roleRef:
   name: versus-kubernetes-reader
 ```
 
-Secrets are deliberately omitted by default. Topology reports project only
+Secrets are deliberately omitted by default. Resource reports project only
 referenced Secret key names; grant `get,list` on core `secrets` separately only
 when that projection is required. Gateway API reads are also optional: add
 `get,list` for `gateway.networking.k8s.io` `gateways` and `httproutes`, or set
@@ -286,7 +288,7 @@ those CRDs are installed.
 
 For least privilege, replace `ClusterRole`/`ClusterRoleBinding` with a `Role`
 and `RoleBinding` in each observed namespace, remove nodes/namespaces and node
-metrics, and accept partial cluster overview/topology. API discovery itself may
+metrics, and accept a partial cluster overview. API discovery itself may
 still be visible, while forbidden resource reads are reported as partial.
 
 ## Network and TLS policy
@@ -312,3 +314,18 @@ permissions, cloud identity prerequisites, Kubernetes RBAC, CA trust, and
 endpoint CIDRs. Tokens, presigned URLs, key bytes, client secrets, assertions,
 and provider response bodies are never returned in catalog, admin, audit, or
 error payloads.
+
+The admin API and Kubernetes page return a safe error code, explanation, and
+next action:
+
+| Code | What to check |
+| --- | --- |
+| `credential_unavailable` | Configure the selected auth mode. For EKS, provide IRSA, Pod Identity, environment credentials, or an explicitly selected static profile. |
+| `cluster_authentication_failed` | Verify cloud identity, cluster access mapping, token audience, and credential expiry. |
+| `cluster_permission_denied` | Grant the connector identity the required read-only Kubernetes RBAC. |
+| `tls_verification_failed` | Verify `ca_data` or `ca_file` and `server_name` against the API-server certificate. |
+| `dns_resolution_failed` | Resolve the configured endpoint from the Versus container. |
+| `connection_failed` | Check endpoint CIDRs, private-network access, routes, firewall rules, and security groups. |
+| `request_timeout` | Check API-server reachability and control-plane latency before increasing the timeout. |
+| `response_too_large` or `operation_budget_exhausted` | Narrow the namespace, resource category, selectors, search query, or result limit. |
+| `connector_configuration_invalid` | Check the endpoint, network policy, CA selection, and auth-mode fields, then restart Versus. |

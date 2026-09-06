@@ -34,6 +34,8 @@ const (
 	stagnationLimit      = 3
 )
 
+var errModelResponseUnavailable = errors.New("chat: model response unavailable")
+
 type Options struct {
 	HTTPClient   *http.Client
 	BaseURL      string
@@ -199,7 +201,7 @@ func (agent *Agent) RunChatTurn(ctx context.Context, task core.ChatTask) (*core.
 			if errors.Is(event.Err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				return result, fmt.Errorf("chat: run timed out: %w", context.DeadlineExceeded)
 			}
-			return result, fmt.Errorf("chat: ADK run failed")
+			return result, errModelResponseUnavailable
 		}
 		if event.Output == nil || event.Output.MessageOutput == nil {
 			continue
@@ -249,7 +251,7 @@ func (agent *Agent) RunChatTurn(ctx context.Context, task core.ChatTask) (*core.
 		return result, safeRunError(ctx, ctx.Err())
 	}
 	if result.Markdown == "" {
-		return result, fmt.Errorf("chat: model returned no answer")
+		return result, errModelResponseUnavailable
 	}
 	return result, nil
 }
@@ -346,7 +348,7 @@ func safeRunError(ctx context.Context, err error) error {
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return fmt.Errorf("chat: run timed out: %w", context.DeadlineExceeded)
 	}
-	return fmt.Errorf("chat: model stream failed")
+	return errModelResponseUnavailable
 }
 
 func historyMessages(ctx context.Context) ([]*schema.Message, int) {

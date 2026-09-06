@@ -169,6 +169,7 @@ describe("AlertFatigueSettingsControl — moved config renders + saves (manager)
       ),
     );
   });
+
 });
 
 describe("AlertFatigueSettingsControl — custom fatigue channel form", () => {

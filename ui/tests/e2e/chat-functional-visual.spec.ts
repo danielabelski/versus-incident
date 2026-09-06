@@ -204,7 +204,13 @@ async function installApi(page: Page, options: MockOptions = {}) {
 }
 
 async function signIn(page: Page) {
-  await page.getByLabel("Gateway secret").fill("qa-secret");
+  const secret = page.getByLabel("Gateway secret");
+  const needsSignIn = await Promise.race([
+    secret.waitFor({ state: "visible" }).then(() => true),
+    page.getByTestId("app-authenticated").waitFor({ state: "visible" }).then(() => false),
+  ]);
+  if (!needsSignIn) return;
+  await secret.fill("qa-secret");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page.getByTestId("app-authenticated")).toBeVisible();
 }
@@ -233,24 +239,23 @@ async function assertViewportIntegrity(page: Page) {
   }
 }
 
-test("session lifecycle, deep link, exact stream result, attachment, summary, and deletion", async ({ page }) => {
+test("session lifecycle, deep link, exact stream result, summary, and deletion", async ({ page }) => {
   const state = await installApi(page);
   await openChat(page);
 
-  await page.getByRole("button", { name: "Attach context" }).click();
-  await page.getByLabel("Service context").fill("checkout");
-  await page.getByLabel("Incident ID context").fill("inc-42");
+  await expect(page.getByRole("button", { name: "Attach context" })).toHaveCount(0);
+  await expect(page.getByText(/letters left/)).toHaveCount(0);
   await page.getByLabel("Message").fill("What changed?");
   await page.getByLabel("Message").press("Enter");
 
   await expect(page).toHaveURL(/session=session-created/);
   await expect(page.getByText(assistant, { exact: true })).toHaveCount(1);
+  await expect(page.getByRole("link", { name: "Open Tool catalog" })).toHaveAttribute("href", "/agent/tools");
   expect(state.calls).toEqual(expect.arrayContaining(["list", "create", "message", "get"]));
   expect(state.messageBodies[0]).toEqual({
     message: "What changed?",
-    attachment: { service: "checkout", incident: { id: "inc-42" } },
   });
-  await expect(page.getByText("What changed?", { exact: true })).toHaveCount(2);
+  await expect(page.getByText("What changed?", { exact: true })).toHaveCount(1);
 
   await page.reload();
   await expect(page.getByTestId("app-authenticated")).toBeVisible();
@@ -258,7 +263,8 @@ test("session lifecycle, deep link, exact stream result, attachment, summary, an
   expect(state.gatewayExchanges).toBe(1);
   expect(state.authenticatedConfigProbes).toBeGreaterThanOrEqual(1);
   await expect(page.getByText(assistant, { exact: true })).toHaveCount(1);
-  await page.getByRole("button", { name: "Delete thread" }).click();
+  await page.getByRole("button", { name: "Open chat history" }).click();
+  await page.getByRole("dialog", { name: "Thread history" }).getByRole("button", { name: "Delete thread" }).click();
   await expect(page).not.toHaveURL(/session=/);
   await expect(page.getByRole("heading", { name: "Versus DevOps Chat" })).toBeVisible();
   expect(state.calls).toContain("delete");
@@ -299,8 +305,10 @@ test("delete failures are actionable without a live run and successful retry cle
   for (const status of [409, 500, 401]) {
     const state = await installApi(page, { sessions: [populatedSession()], deleteStatuses: [status] });
     await openChat(page, "?session=session-1");
-    await page.getByRole("button", { name: "Delete thread" }).click();
-    const alert = page.getByRole("alert");
+    await page.getByRole("button", { name: "Open chat history" }).click();
+    const history = page.getByRole("dialog", { name: "Thread history" });
+    await history.getByRole("button", { name: "Delete thread" }).click();
+    const alert = history.getByRole("alert");
     await expect(alert).toContainText(new RegExp(`delete error ${status}|Session expired`));
     if (status === 401) {
       await page.getByRole("dialog", { name: "Session expired" }).getByRole("button", { name: "Close dialog" }).click();
@@ -393,7 +401,7 @@ test("tool output, evidence, summaries, sticky bottom, markdown policy, and copy
   expect(gap).toBeLessThanOrEqual(1);
 });
 
-test("mobile history and evidence drawers support interaction, focus containment, and escape", async ({ page }) => {
+test("history modal and mobile evidence drawer support interaction, focus containment, and escape", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await installApi(page, { sessions: [toolSession()] });
   await openChat(page, "?session=session-1");
@@ -411,7 +419,7 @@ test("mobile history and evidence drawers support interaction, focus containment
   const evidenceFocused = await evidence.evaluate((dialog) => dialog.contains(document.activeElement));
   await evidence.getByRole("button", { name: "Close evidence" }).last().click();
   await expect(evidence).toBeHidden();
-  expect.soft(historyFocused, "history drawer should receive focus when opened").toBe(true);
+  expect.soft(historyFocused, "history modal should receive focus when opened").toBe(true);
   expect.soft(evidenceFocused, "evidence drawer should receive focus when opened").toBe(true);
 });
 
@@ -442,24 +450,26 @@ for (const theme of ["dark", "light"] as const) {
         await signIn(page);
 
         if (visualState === "loading") {
-          if (viewport.name === "mobile") {
-            await page.getByRole("button", { name: "Open chat history" }).click();
-            await expect(page.getByRole("dialog", { name: "Thread history" }).getByLabel("Loading history")).toBeVisible();
-          } else {
-            await expect(page.getByLabel("Loading history")).toBeVisible();
-          }
+          await page.getByRole("button", { name: "Open chat history" }).click();
+          await expect(page.getByRole("dialog", { name: "Thread history" }).getByLabel("Loading history")).toBeVisible();
           await page.waitForTimeout(100);
         } else if (visualState === "error") {
           await expect(page.getByRole("heading", { name: "Chat is not enabled" })).toBeVisible();
         } else {
           await expect(page.getByLabel("Message")).toBeVisible();
         }
+        if (visualState === "empty") {
+          await expect(page.getByLabel("Conversation").getByRole("img", { name: "Versus" })).toHaveAttribute(
+            "src",
+            theme === "dark" ? "/versus-logo-light.svg" : "/versus-logo-dark.svg",
+          );
+        }
         if (visualState === "evidence") {
           await page.getByRole("button", { name: /Latency series/ }).click();
           await expect(page.getByRole(viewport.name === "mobile" ? "dialog" : "complementary", { name: "Evidence details" })).toBeVisible();
           await page.waitForTimeout(400);
         }
-        if (visualState === "history" && viewport.name === "mobile") {
+        if (visualState === "history") {
           await page.getByRole("button", { name: "Open chat history" }).click();
           await expect(page.getByRole("dialog", { name: "Thread history" })).toBeVisible();
           await page.waitForTimeout(100);

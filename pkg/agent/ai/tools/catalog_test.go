@@ -14,7 +14,7 @@ func TestCatalogIsCompleteOrderedAndUnique(t *testing.T) {
 		GroupVersus, GroupVersus, GroupVersus, GroupVersus, GroupVersus, GroupVersus,
 		GroupVersus, GroupVersus, GroupVersus, GroupVersus, GroupVersus,
 		GroupCommon, GroupCommon, GroupCommon, GroupCommon, GroupCommon, GroupCommon,
-		GroupK8s, GroupK8s, GroupK8s, GroupK8s, GroupK8s, GroupK8s, GroupK8s, GroupK8s, GroupK8s,
+		GroupK8s, GroupK8s, GroupK8s, GroupK8s, GroupK8s, GroupK8s, GroupK8s, GroupK8s,
 	}
 	got := Catalog()
 	if len(got) != len(wantGroups) {
@@ -49,7 +49,7 @@ func TestCatalogDestinationsAreExactAndSafe(t *testing.T) {
 		"describe_dependencies": {docsTools + "?id=describe_dependencies", ""},
 		"get_cluster_overview":  {docsKubernetes, ""}, "discover_k8s_resources": {docsKubernetes, ""}, "query_k8s_resources": {docsKubernetes, ""},
 		"get_k8s_resource": {docsKubernetes, ""}, "list_workloads": {docsKubernetes, ""}, "get_workload": {docsKubernetes, ""},
-		"get_k8s_topology": {docsKubernetes, ""}, "list_k8s_events": {docsKubernetes, ""}, "get_pod_logs": {docsKubernetes, ""},
+		"list_k8s_events": {docsKubernetes, ""}, "get_pod_logs": {docsKubernetes, ""},
 	}
 	got := make(map[string][2]string, len(want))
 	for _, metadata := range Catalog() {
@@ -178,7 +178,7 @@ func TestToolsetsAreExactOrderedAndOwnEveryVisibleTool(t *testing.T) {
 		icon     string
 		children []string
 	}{
-		{"kubernetes", SectionConnector, "kubernetes", []string{"get_cluster_overview", "discover_k8s_resources", "query_k8s_resources", "get_k8s_resource", "list_workloads", "get_workload", "get_k8s_topology", "list_k8s_events", "get_pod_logs"}},
+		{"kubernetes", SectionConnector, "kubernetes", []string{"get_cluster_overview", "discover_k8s_resources", "query_k8s_resources", "get_k8s_resource", "list_workloads", "get_workload", "list_k8s_events", "get_pod_logs"}},
 		{"source-control", SectionConnector, "git", []string{"recent_changes"}},
 		{"logs", SectionDataSource, "logs", []string{"get_related_logs"}},
 		{"metrics", SectionDataSource, "metrics", []string{"query_metrics"}},

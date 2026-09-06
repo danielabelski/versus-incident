@@ -171,31 +171,6 @@ type Usage struct {
 	Partial      []PartialFailure    `json:"partial_failures,omitempty"`
 }
 
-type TopologyNode struct {
-	ID        string `json:"id"`
-	Kind      string `json:"kind"`
-	Namespace string `json:"namespace,omitempty"`
-	Name      string `json:"name"`
-	Status    string `json:"status,omitempty"`
-}
-
-type TopologyEdge struct {
-	From   string `json:"from"`
-	To     string `json:"to"`
-	Type   string `json:"type"`
-	Intent bool   `json:"intent,omitempty"`
-}
-
-type Topology struct {
-	Nodes     []TopologyNode   `json:"nodes"`
-	Edges     []TopologyEdge   `json:"edges"`
-	NodeCap   int              `json:"node_cap"`
-	EdgeCap   int              `json:"edge_cap"`
-	Truncated bool             `json:"truncated"`
-	Omitted   []string         `json:"omitted_categories,omitempty"`
-	Partial   []PartialFailure `json:"partial_failures,omitempty"`
-}
-
 type PodLogs struct {
 	ClusterID    string `json:"cluster_id"`
 	Namespace    string `json:"namespace"`
@@ -496,14 +471,16 @@ func (service *Service) Get(ctx context.Context, resourceID, namespace, name str
 
 // Overview returns bounded health counts and explicit partial failures.
 func (service *Service) Overview(ctx context.Context) (Overview, error) {
-	ctx, cancel := ensureOperationBudget(ctx)
+	ctx, cancel := ensureOperationBudgetRequests(ctx, overviewOperationRequests)
 	defer cancel()
 	result := Overview{Connector: "kubernetes", ClusterID: service.scope.ClusterID, ObservedAt: time.Now().UTC(), UsageSource: "unavailable", MetricsStatus: "unavailable"}
 	var err error
-	ctx, _, err = service.withDiscovery(ctx)
+	var discovery Discovery
+	ctx, discovery, err = service.withDiscovery(ctx)
 	if err != nil {
 		return result, err
 	}
+	result.Partial = append(result.Partial, discovery.Partial...)
 	requestedCPU, limitedCPU := new(big.Rat), new(big.Rat)
 	requestedMemory, limitedMemory := new(big.Rat), new(big.Rat)
 	allocatableCPU, allocatableMemory := new(big.Rat), new(big.Rat)
@@ -548,6 +525,8 @@ func (service *Service) Overview(ctx context.Context) (Overview, error) {
 	} {
 		page, err := service.listAll(ctx, ListOptions{ResourceID: request.id})
 		if err != nil {
+			result.Truncated = true
+			result.Omitted = appendUnique(result.Omitted, request.id)
 			result.Partial = append(result.Partial, PartialFailure{ResourceID: request.id, Class: errorClass(err)})
 			continue
 		}
@@ -705,202 +684,6 @@ func summarizeMetricsSource(metrics []ResourceUsage, observedAt time.Time) Metri
 	status.CPU = rationalString(cpu)
 	status.Memory = rationalString(memory)
 	return status
-}
-
-// Topology derives bounded containment, ownership, and scheduling edges.
-func (service *Service) Topology(ctx context.Context, namespace string, nodeCap, edgeCap int) (Topology, error) {
-	ctx, cancel := ensureOperationBudget(ctx)
-	defer cancel()
-	if nodeCap <= 0 || nodeCap > 500 {
-		nodeCap = 200
-	}
-	if edgeCap <= 0 || edgeCap > 1000 {
-		edgeCap = 400
-	}
-	result := Topology{NodeCap: nodeCap, EdgeCap: edgeCap}
-	ctx, discovery, err := service.withDiscovery(ctx)
-	if err != nil {
-		return result, err
-	}
-	available := make(map[string]bool, len(discovery.Resources))
-	definitions := make(map[string]ResourceDefinition, len(discovery.Resources))
-	for _, definition := range discovery.Resources {
-		available[definition.ID] = true
-		definitions[definition.ID] = definition
-	}
-	result.Partial = append(result.Partial, discovery.Partial...)
-	seen := make(map[string]bool)
-	resources := make(map[string]ProjectedResource)
-	resourceByNode := make(map[string]string)
-	markOmitted := func(resourceID string) {
-		result.Omitted = appendUnique(result.Omitted, resourceID)
-		if definition, ok := definitions[resourceID]; ok {
-			result.Omitted = appendUnique(result.Omitted, "category="+resourceCategory(definition.Kind))
-		}
-	}
-	addEdge := func(edge TopologyEdge) {
-		if !seen[edge.From] || !seen[edge.To] {
-			return
-		}
-		for _, existing := range result.Edges {
-			if existing == edge {
-				return
-			}
-		}
-		if len(result.Edges) < edgeCap {
-			result.Edges = append(result.Edges, edge)
-		} else {
-			result.Truncated = true
-		}
-	}
-	availableResourceIDs := make([]string, 0, len(topologyResourceIDs))
-	for _, resourceID := range topologyResourceIDs {
-		if !available[resourceID] {
-			result.Omitted = appendUnique(result.Omitted, resourceID)
-			continue
-		}
-		availableResourceIDs = append(availableResourceIDs, resourceID)
-	}
-	collectionBudget := min(maxCollectedItems, nodeCap+2*edgeCap)
-	if collectionBudget < len(availableResourceIDs) {
-		collectionBudget = len(availableResourceIDs)
-	}
-	resourceBudgets := topologyCollectionBudgets(availableResourceIDs, definitions, collectionBudget)
-	pages := make(map[string][]ProjectedResource, len(availableResourceIDs))
-	for _, resourceID := range availableResourceIDs {
-		remaining := resourceBudgets[resourceID]
-		continuation := ""
-		for remaining > 0 {
-			page, listErr := service.List(ctx, ListOptions{ResourceID: resourceID, Namespace: namespace, Continue: continuation, Limit: min(remaining, maxPageSize)})
-			if listErr != nil {
-				result.Partial = append(result.Partial, PartialFailure{ResourceID: resourceID, Class: errorClass(listErr)})
-				markOmitted(resourceID)
-				break
-			}
-			pages[resourceID] = append(pages[resourceID], page.Items...)
-			result.Partial = append(result.Partial, page.Partial...)
-			remaining -= len(page.Items)
-			continuation = page.Continue
-			if continuation == "" || len(page.Items) == 0 {
-				if page.Truncated || len(page.Items) == 0 && continuation != "" {
-					result.Truncated = true
-					markOmitted(resourceID)
-				}
-				break
-			}
-		}
-		if continuation != "" {
-			result.Truncated = true
-			markOmitted(resourceID)
-		}
-		sort.SliceStable(pages[resourceID], func(i, j int) bool {
-			return objectID(pages[resourceID][i].Kind, pages[resourceID][i].Namespace, pages[resourceID][i].Name) < objectID(pages[resourceID][j].Kind, pages[resourceID][j].Namespace, pages[resourceID][j].Name)
-		})
-	}
-	cappedResourceID := ""
-	for index := 0; len(result.Nodes) < nodeCap; index++ {
-		added := false
-		for _, resourceID := range topologyResourceIDs {
-			items := pages[resourceID]
-			if index >= len(items) {
-				continue
-			}
-			added = true
-			item := items[index]
-			id := objectID(item.Kind, item.Namespace, item.Name)
-			if seen[id] {
-				continue
-			}
-			status := summaryString(item.Summary, "phase")
-			if status == "" && conditionTrue(item.Conditions, "Ready") {
-				status = "Ready"
-			}
-			seen[id] = true
-			resources[id] = item
-			resourceByNode[id] = resourceID
-			result.Nodes = append(result.Nodes, TopologyNode{ID: id, Kind: item.Kind, Namespace: item.Namespace, Name: item.Name, Status: status})
-			if len(result.Nodes) == nodeCap {
-				cappedResourceID = resourceID
-				break
-			}
-		}
-		if !added {
-			break
-		}
-	}
-	if cappedResourceID != "" {
-		result.Truncated = true
-		markOmitted(cappedResourceID)
-	}
-	for _, resourceID := range topologyResourceIDs {
-		items := pages[resourceID]
-		admitted := 0
-		for _, item := range items {
-			if seen[objectID(item.Kind, item.Namespace, item.Name)] {
-				admitted++
-			}
-		}
-		if admitted < len(items) {
-			result.Truncated = true
-			markOmitted(resourceID)
-		}
-	}
-	deriveTopologyEdges(resources, func(edge TopologyEdge) {
-		before := len(result.Edges)
-		addEdge(edge)
-		if len(result.Edges) == edgeCap && len(result.Edges) > before {
-			result.Truncated = true
-			markOmitted(resourceByNode[edge.From])
-			markOmitted(resourceByNode[edge.To])
-		}
-		if len(result.Edges) == before && seen[edge.From] && seen[edge.To] && len(result.Edges) >= edgeCap {
-			markOmitted(resourceByNode[edge.From])
-			markOmitted(resourceByNode[edge.To])
-		}
-	})
-	sort.SliceStable(result.Nodes, func(i, j int) bool { return result.Nodes[i].ID < result.Nodes[j].ID })
-	sort.SliceStable(result.Edges, func(i, j int) bool {
-		if result.Edges[i].From != result.Edges[j].From {
-			return result.Edges[i].From < result.Edges[j].From
-		}
-		if result.Edges[i].To != result.Edges[j].To {
-			return result.Edges[i].To < result.Edges[j].To
-		}
-		return result.Edges[i].Type < result.Edges[j].Type
-	})
-	return result, nil
-}
-
-func topologyCollectionBudgets(resourceIDs []string, definitions map[string]ResourceDefinition, total int) map[string]int {
-	budgets := make(map[string]int, len(resourceIDs))
-	if len(resourceIDs) == 0 || total <= 0 {
-		return budgets
-	}
-	categories := make([]string, 0)
-	byCategory := make(map[string][]string)
-	for _, resourceID := range resourceIDs {
-		category := resourceCategory(definitions[resourceID].Kind)
-		if len(byCategory[category]) == 0 {
-			categories = append(categories, category)
-		}
-		byCategory[category] = append(byCategory[category], resourceID)
-		budgets[resourceID] = 1
-	}
-	remaining := total - len(resourceIDs)
-	next := make(map[string]int, len(categories))
-	for remaining > 0 {
-		for _, category := range categories {
-			resources := byCategory[category]
-			resourceID := resources[next[category]%len(resources)]
-			budgets[resourceID]++
-			next[category]++
-			remaining--
-			if remaining == 0 {
-				break
-			}
-		}
-	}
-	return budgets
 }
 
 // PodLogs reads one bounded pod log stream, optionally selecting a container.
@@ -1271,7 +1054,7 @@ func safeSummary(kind string, raw map[string]any, scrubber Scrubber) map[string]
 			summary["selector"] = stringMap(selector)
 		}
 	}
-	projectTopologyReferences(kind, metadata, spec, summary)
+	projectResourceReferences(kind, metadata, spec, summary)
 	if created := stringValue(metadata["creationTimestamp"]); created != "" {
 		summary["created_at"] = boundString(created)
 	}
@@ -1587,7 +1370,4 @@ func conditionTrue(conditions []Condition, kind string) bool {
 		}
 	}
 	return false
-}
-func objectID(kind, namespace, name string) string {
-	return strings.ToLower(kind) + ":" + namespace + ":" + name
 }

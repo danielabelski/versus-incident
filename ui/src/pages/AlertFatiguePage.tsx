@@ -164,7 +164,7 @@ export function AlertFatiguePage() {
 
   return (
     <AlertFatigueShell>
-      <AdminBody />
+      <AdminBody key={access.org ?? ""} />
     </AlertFatigueShell>
   );
 }
@@ -510,41 +510,43 @@ function ReviewTable() {
 
   return (
     <div id={FINGERPRINTS_ANCHOR_ID} className="card overflow-hidden">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-ink-700 px-4 py-3">
-        <div>
-          <h2 className="text-sm font-semibold text-ink-50">
-            Fingerprints
-            {total !== undefined && (
-              <span className="ml-2 text-2xs font-normal text-ink-400">
-                {total.toLocaleString()} {totalNoun}
-              </span>
-            )}
-          </h2>
-          {serviceFilter && (
-            <button
-              type="button"
-              data-testid="alert-fatigue-service-chip"
-              aria-label={`Clear service filter: ${displayService(serviceFilter)}`}
-              onClick={clearService}
-              className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-ink-600 bg-ink-950/40 px-2.5 py-1 text-2xs text-ink-200 hover:border-ink-500 hover:text-ink-50"
-            >
-              <span>
-                Service:{" "}
-                <span className="font-semibold">
-                  {displayService(serviceFilter)}
+      <div className="border-b border-ink-700 px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-semibold text-ink-50">
+              Fingerprints
+              {total !== undefined && (
+                <span className="ml-2 text-2xs font-normal text-ink-400">
+                  {total.toLocaleString()} {totalNoun}
                 </span>
-              </span>
-              <X size={12} aria-hidden />
-            </button>
-          )}
-        </div>
-        <div className="flex items-center gap-2 text-2xs text-ink-400">
-          <SegmentedControl
-            param="status"
-            defaultValue=""
-            aria-label="Status filter"
-            options={statusOptions}
-          />
+              )}
+            </h2>
+            {serviceFilter && (
+              <button
+                type="button"
+                data-testid="alert-fatigue-service-chip"
+                aria-label={`Clear service filter: ${displayService(serviceFilter)}`}
+                onClick={clearService}
+                className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-ink-600 bg-ink-950/40 px-2.5 py-1 text-2xs text-ink-200 hover:border-ink-500 hover:text-ink-50"
+              >
+                <span>
+                  Service:{" "}
+                  <span className="font-semibold">
+                    {displayService(serviceFilter)}
+                  </span>
+                </span>
+                <X size={12} aria-hidden />
+              </button>
+            )}
+          </div>
+          <div className="flex items-center gap-2 text-2xs text-ink-400">
+            <SegmentedControl
+              param="status"
+              defaultValue=""
+              aria-label="Status filter"
+              options={statusOptions}
+            />
+          </div>
         </div>
       </div>
 
@@ -609,9 +611,10 @@ function ReviewTable() {
         />
       ) : (
         <>
-          <table className="ddt w-full table-fixed">
-            <thead>
-              <tr>
+          <div className="max-h-[calc(100vh-210px)] overflow-auto">
+            <table className="ddt w-full table-fixed">
+              <thead>
+                <tr>
                 <th className="w-[14%]">Service</th>
                 <th className="w-[9%]">Source</th>
                 <th className="w-[9%]">Severity</th>
@@ -647,23 +650,27 @@ function ReviewTable() {
                 <th className="w-[10%]">Status</th>
                 <th className="w-[10%]">Routed channel</th>
                 <th className="w-[14%] text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((r) => (
-                <FingerprintRow
-                  key={r.id}
-                  row={r}
-                  acting={acting}
-                  onPeek={() => setPeekId(r.id)}
-                  onConfirm={() => confirm.mutate(r.id)}
-                  onReclaim={() => reclaim.mutate(r.id)}
-                />
-              ))}
-            </tbody>
-          </table>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((r) => (
+                  <FingerprintRow
+                    key={r.id}
+                    row={r}
+                    acting={acting}
+                    onPeek={() => setPeekId(r.id)}
+                    onConfirm={() => confirm.mutate(r.id)}
+                    onReclaim={() => reclaim.mutate(r.id)}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
           {(q.isFetchingNextPage || q.hasNextPage) && (
-            <div className="flex items-center justify-center gap-1.5 border-t border-ink-600 px-3 py-2 text-2xs text-ink-400">
+            <div
+              className="flex items-center justify-center gap-1.5 border-t border-ink-600 px-3 py-2 text-2xs text-ink-400"
+              data-testid="alert-fatigue-load-more"
+            >
               {q.isFetchingNextPage ? (
                 <>
                   <Loader2 size={12} className="animate-spin" />
@@ -673,7 +680,6 @@ function ReviewTable() {
                 <button
                   type="button"
                   className="text-brand-300 hover:underline"
-                  data-testid="alert-fatigue-load-more"
                   onClick={() => q.fetchNextPage()}
                 >
                   Load more ({total?.toLocaleString() ?? ""} total)

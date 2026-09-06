@@ -19,6 +19,10 @@ tools:
   # is implemented in Go; no cloud CLI or Kubernetes auth plugin is executed.
   # Except for in_cluster, the endpoint and CA are operator-provided. Private
   # endpoints also require allow_private_networks or endpoint_cidrs.
+  # Examples use ca_data expanded from an environment-backed Secret. Set
+  # KUBERNETES_CA_DATA to the base64-encoded CA certificate. A mounted PEM file
+  # is also supported: replace ca_data with ca_file: /run/kubernetes/ca.crt.
+  # Configure only one of ca_data or ca_file.
   kubernetes:
     auth:
       mode: ""
@@ -29,21 +33,21 @@ tools:
 
     # Rotating token file:
     # endpoint: https://api.example
-    # ca_file: /run/secrets/kubernetes/ca.crt
+    # ca_data: ${KUBERNETES_CA_DATA}
     # auth:
     #   mode: token_file
     #   token_file: /run/secrets/kubernetes/token
 
     # Static token, normally expanded from an environment-backed Secret:
     # endpoint: https://api.example
-    # ca_file: /run/secrets/kubernetes/ca.crt
+    # ca_data: ${KUBERNETES_CA_DATA}
     # auth:
     #   mode: token
     #   token: ${KUBERNETES_TOKEN}
 
     # Client certificate files (certificate_data/key_data are also supported):
     # endpoint: https://api.example
-    # ca_file: /run/secrets/kubernetes/ca.crt
+    # ca_data: ${KUBERNETES_CA_DATA}
     # auth:
     #   mode: client_certificate
     #   client_certificate:
@@ -64,7 +68,7 @@ tools:
     # overrides are rejected. Benign CLI output/pager/retry settings are ignored.
     # Optional YAML role_arn uses native STS AssumeRole.
     # endpoint: https://API_ID.eks.us-east-1.amazonaws.com
-    # ca_file: /run/secrets/kubernetes/ca.crt
+    # ca_data: ${KUBERNETES_CA_DATA}
     # auth:
     #   mode: eks
     #   eks:
@@ -75,7 +79,7 @@ tools:
 
     # AKS workload identity:
     # endpoint: https://production.example.azmk8s.io
-    # ca_file: /run/secrets/kubernetes/ca.crt
+    # ca_data: ${KUBERNETES_CA_DATA}
     # auth:
     #   mode: aks
     #   aks:
@@ -88,7 +92,7 @@ tools:
 
     # AKS client secret:
     # endpoint: https://production.example.azmk8s.io
-    # ca_file: /run/secrets/kubernetes/ca.crt
+    # ca_data: ${KUBERNETES_CA_DATA}
     # auth:
     #   mode: aks
     #   aks:
@@ -101,7 +105,7 @@ tools:
 
     # AKS managed identity:
     # endpoint: https://production.example.azmk8s.io
-    # ca_file: /run/secrets/kubernetes/ca.crt
+    # ca_data: ${KUBERNETES_CA_DATA}
     # auth:
     #   mode: aks
     #   aks:
@@ -116,7 +120,7 @@ tools:
     # GOOGLE_APPLICATION_CREDENTIALS and GCE_METADATA_HOST are rejected in
     # every mode, and well-known gcloud ADC files are never discovered.
     # endpoint: https://GKE_CONTROL_PLANE_ENDPOINT
-    # ca_file: /run/secrets/kubernetes/ca.crt
+    # ca_data: ${KUBERNETES_CA_DATA}
     # auth:
     #   mode: gke
     #   gke:

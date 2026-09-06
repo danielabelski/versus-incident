@@ -18,12 +18,12 @@ serviceAccount:
   name: ""
 
 # Optionally grant the chart ServiceAccount the cluster-wide read permissions
-# used by all nine Kubernetes tools. Leave disabled when bindings are managed
+# used by all eight Kubernetes tools. Leave disabled when bindings are managed
 # separately or when namespace-scoped Roles are preferred.
 kubernetesReaderRBAC:
   enabled: false
   # Gateway API CRDs are optional and may not be installed. Enable only when
-  # topology should read Gateway and HTTPRoute resources.
+  # generic Gateway and HTTPRoute reads are needed.
   gatewayAPI: false
 
 service:

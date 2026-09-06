@@ -50,6 +50,12 @@ func (throttledRunner) RunChat(context.Context, core.ChatTask) (*core.ChatTurnRe
 	return nil, router.ErrRateLimited
 }
 
+type unavailableModelRunner struct{}
+
+func (unavailableModelRunner) RunChat(context.Context, core.ChatTask) (*core.ChatTurnResult, error) {
+	return nil, errModelResponseUnavailable
+}
+
 type captureTaskRunner struct{ task core.ChatTask }
 
 func (runner *captureTaskRunner) RunChat(_ context.Context, task core.ChatTask) (*core.ChatTurnResult, error) {
@@ -93,6 +99,24 @@ func TestServicePersistsUserAndAssistantTurns(t *testing.T) {
 	}
 	if session.Status != SessionIdle {
 		t.Fatalf("status = %q", session.Status)
+	}
+}
+
+func TestServicePersistsActionableModelResponseFailure(t *testing.T) {
+	service, id := newTestService(t, unavailableModelRunner{})
+	if _, err := service.Send(context.Background(), id, "what changed?", nil); !errors.Is(err, errModelResponseUnavailable) {
+		t.Fatalf("Send error = %v, want model response unavailable", err)
+	}
+	session, err := service.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := session.Turns[len(session.Turns)-1]
+	if last.Role != TurnCompaction || !strings.Contains(last.Content, "Verify the configured AI provider credentials") {
+		t.Fatalf("failure turn = %+v", last)
+	}
+	if len(last.Events) == 0 || last.Events[len(last.Events)-1].Error != "model response unavailable" {
+		t.Fatalf("failure events = %+v", last.Events)
 	}
 }
 

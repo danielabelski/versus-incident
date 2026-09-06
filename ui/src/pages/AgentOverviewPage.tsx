@@ -102,15 +102,11 @@ export function AgentOverviewPage() {
   const svcTracked = svcTotal - svcInGrace;
   const svcTrackedFrac = svcTotal > 0 ? svcTracked / svcTotal : 0;
 
-  const topPatterns = useMemo(() => {
-    const list = patterns.data ?? [];
-    return [...list].sort((a, b) => b.count - a.count).slice(0, 5);
-  }, [patterns.data]);
-
-  const recentShadow = useMemo(
-    () => (shadow.data ?? []).slice(0, 5),
-    [shadow.data],
+  const topPatterns = useMemo(
+    () => [...(patterns.data ?? [])].sort((a, b) => b.count - a.count).slice(0, 5),
+    [patterns.data],
   );
+  const recentShadow = (shadow.data ?? []).slice(0, 5);
 
   // Shadow activity over 24h from event last_seen stamps — the only
   // windowed series this page's queries already carry. Enhancement only:

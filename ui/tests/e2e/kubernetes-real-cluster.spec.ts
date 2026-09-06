@@ -8,24 +8,26 @@ test.describe("Kubernetes real cluster", () => {
     const pageErrors: Error[] = [];
     page.on("pageerror", (error) => pageErrors.push(error));
     await openApp(page, "/agent/tools");
-    await expect(page.locator("main section > div:first-child h2")).toHaveText(["Connectors", "Data Source Tools", "Common"]);
     await expect(page.locator("main article")).toHaveCount(7);
     await expect(page.getByText("get_cluster_overview", { exact: true })).toHaveCount(0);
 
     const kubernetesCard = page.locator("article").filter({ has: page.getByRole("heading", { name: "Kubernetes" }) });
-    await expect(kubernetesCard.getByText("9 tools", { exact: true })).toBeVisible();
-    await kubernetesCard.getByRole("link", { name: "Open tool" }).click();
+    await expect(kubernetesCard.getByText("9 tools", { exact: true })).toHaveCount(0);
+    await kubernetesCard.getByRole("link", { name: "Open Kubernetes" }).click();
 
     await expect(page).toHaveURL(/\/agent\/kubernetes$/);
     await expect(page.getByText("docker-desktop-qa", { exact: false })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Workloads" })).toBeVisible();
     await page.getByRole("textbox", { name: "Namespace", exact: true }).fill("versus-dc6-allowed");
     await expect(page.getByText("qa-web", { exact: true }).first()).toBeVisible();
-    await expect(page.getByLabel("Kubernetes topology graph")).toBeVisible();
+    const nodes = page.getByRole("region", { name: "Nodes" });
+    await expect(nodes).toBeVisible();
+    await nodes.getByRole("button", { name: /View pods on/ }).first().click();
+    await expect(nodes.getByText("Scheduled pods across all namespaces")).toBeVisible();
 
     await page.getByLabel("Resource name").fill("qa-web");
     await page.getByRole("button", { name: "Search" }).click();
-    await expect(page.getByRole("heading", { name: "Search results" }).locator("..")).toContainText("qa-web");
+    await expect(page.getByRole("region", { name: "Search results" })).toContainText("qa-web");
     expect(pageErrors).toEqual([]);
   });
 
@@ -35,7 +37,7 @@ test.describe("Kubernetes real cluster", () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await openApp(page, "/agent/kubernetes");
     await expect(page.getByText("docker-desktop-qa", { exact: false })).toBeVisible();
-    await expect(page.getByLabel("Kubernetes topology graph")).toBeVisible();
+    await expect(page.getByRole("region", { name: "Nodes" })).toBeVisible();
     const main = await page.locator("main").boundingBox();
     expect(main?.width).toBeLessThanOrEqual(390);
     const overflows = await page.locator("main button, main input, main [role=listitem]").evaluateAll((elements) =>
@@ -45,6 +47,12 @@ test.describe("Kubernetes real cluster", () => {
       }),
     );
     expect(overflows).toBe(false);
+    const layout = await page.evaluate(() => {
+      const main = document.querySelector<HTMLElement>("#main")!;
+      main.focus();
+      return { overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth, outline: getComputedStyle(main).outlineStyle };
+    });
+    expect(layout).toEqual({ overflow: false, outline: "none" });
     expect(pageErrors).toEqual([]);
   });
 });
